@@ -14,9 +14,9 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <script type="module" crossorigin src="./assets/main-CFIp_VFv.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/style-Dr85f3MI.js">
-    <link rel="stylesheet" crossorigin href="./assets/style-CQCTo83p.css">
+    <script type="module" crossorigin src="./assets/main-BFPbxXeN.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/style-DfsoFPnp.js">
+    <link rel="stylesheet" crossorigin href="./assets/style-CEnV_Fxm.css">
   </head>
   <body>
     <div class="app">
@@ -82,7 +82,7 @@
           <div class="prompt-row">
             <textarea id="prompt" rows="2" spellcheck="false">The Eiffel Tower is located in the city of</textarea>
             <div class="prompt-actions">
-              <button id="btn-run" type="button" class="btn" disabled>Run lens</button>
+              <button id="btn-run" type="button" class="btn">Run lens</button>
               <div class="continue" role="group" aria-label="Append the predicted token and run again">
                 <button id="btn-continue" type="button" class="btn btn-quiet" disabled title="Append the final prediction to the prompt and run again">Continue +1</button>
                 <button id="btn-continue5" type="button" class="btn btn-quiet" disabled title="Append five predictions, one at a time">+5</button>
@@ -94,8 +94,11 @@
             <div id="examples" class="examples-list"></div>
           </div>
           <p id="example-note" class="hint example-note"></p>
-          <p id="run-status" class="hint" role="status">Ctrl+Enter runs the lens.</p>
-          <dl id="timings" class="timings" hidden></dl>
+          <p id="run-status" class="hint run-status" role="status"></p>
+          <details id="timings-box" class="timings-box" hidden>
+            <summary id="timings-summary"></summary>
+            <dl id="timings" class="timings"></dl>
+          </details>
         </section>
 
         <section id="load-panel" class="load-panel" hidden aria-labelledby="load-phase">
