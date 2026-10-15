@@ -796,12 +796,31 @@ canvas.addEventListener('pointermove', (ev) => {
   else tooltip.hidden = true;
 });
 canvas.addEventListener('pointerleave', () => (tooltip.hidden = true));
+// touch has no hover, so a tap also shows the cell's top 5
+let lastPointer = 'mouse';
+canvas.addEventListener('pointerdown', (ev) => (lastPointer = ev.pointerType));
 canvas.addEventListener('click', (ev) => {
   const h = heatmap.hit(ev.clientX, ev.clientY);
   if (!h) return;
   selected = h;
   render();
   trace(h.pos);
+  if (lastPointer !== 'mouse') {
+    showTooltip(h.layer, h.pos, ev.clientX, ev.clientY);
+    tapScroll = [scrollX, scrollY, heatmapWrap.scrollLeft];
+  }
+});
+// a tapped tooltip goes away on a real scroll or on a tap anywhere else; opening the trace panel can nudge the scroll position by a few pixels, which must not count
+let tapScroll = [0, 0, 0];
+const hideOnScroll = () => {
+  const [x, y, l] = tapScroll;
+  if (Math.abs(scrollX - x) + Math.abs(scrollY - y) + Math.abs(heatmapWrap.scrollLeft - l) > 40) tooltip.hidden = true;
+};
+const hideTooltip = () => (tooltip.hidden = true);
+window.addEventListener('scroll', hideOnScroll, { passive: true });
+heatmapWrap.addEventListener('scroll', hideOnScroll, { passive: true });
+document.addEventListener('pointerdown', (ev) => {
+  if (ev.target !== canvas) hideTooltip();
 });
 canvas.addEventListener('keydown', (ev) => {
   if (!res) return;

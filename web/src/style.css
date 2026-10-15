@@ -47,6 +47,10 @@
 * {
   box-sizing: border-box;
 }
+/* the hidden attribute must win over display rules (e.g. a flex row that is toggled with hidden) */
+[hidden] {
+  display: none !important;
+}
 html,
 body {
   margin: 0;
@@ -986,4 +990,50 @@ progress {
 }
 .preview-badge a {
   color: var(--ink-2);
+}
+
+/* hints that depend on the input device */
+.on-touch {
+  display: none;
+}
+@media (hover: none) {
+  .on-hover {
+    display: none;
+  }
+  .on-touch {
+    display: inline;
+  }
+}
+
+/* phones: title and model first, then prompt and results, theme and footer last */
+@media (max-width: 860px) {
+  .rail {
+    display: contents;
+  }
+  .rail > * {
+    background: var(--panel);
+    margin: 0;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .rail > .brand {
+    order: 1;
+    padding-top: 22px;
+    padding-bottom: 16px;
+    border-bottom: 0;
+  }
+  .rail > .block {
+    order: 2;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .stage {
+    order: 3;
+  }
+  .rail > .rail-foot {
+    order: 4;
+    padding-top: 18px;
+    padding-bottom: 28px;
+    border-top: 1px solid var(--rule);
+  }
 }
