@@ -600,6 +600,7 @@ progress {
 /* theme switch */
 .rail-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -609,4 +610,13 @@ progress {
 }
 .rail-foot .label {
   margin: 0;
+}
+.legal {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.legal a {
+  color: var(--ink-2);
 }

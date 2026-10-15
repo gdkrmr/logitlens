@@ -47,3 +47,7 @@ It prints the top-1 token per layer and position. As a sanity check it also repo
 
 - Architectures: llama, qwen2, qwen3, qwen35.
 - Lens prompts are capped at 64 tokens by default, since llama.cpp computes full logits for every position.
+
+## License
+
+MIT, see `LICENSE`. Third-party components and their licenses are listed in `THIRD_PARTY_NOTICES.txt`, which the web app also serves next to the page.

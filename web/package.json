@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "wasm": "mkdir -p public/wasm && cp ../third_party/wllama/src/wasm/wllama.wasm public/wasm/",
+    "wasm": "mkdir -p public/wasm && cp ../third_party/wllama/src/wasm/wllama.wasm public/wasm/ && cp ../LICENSE public/LICENSE.txt && cp ../THIRD_PARTY_NOTICES.txt public/",
     "dev": "npm run wasm && vite",
     "build": "npm run wasm && tsc --noEmit && vite build",
     "preview": "vite preview"
