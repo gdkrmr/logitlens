@@ -1101,3 +1101,18 @@ progress {
     outline-offset: 2px;
   }
 }
+
+/* chat format toggle under the prompt */
+.chat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.chat-row .check:has(input:disabled) {
+  color: var(--ink-3);
+}
+.chat-note {
+  font-size: 13px;
+  color: var(--ink-3);
+}
