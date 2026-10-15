@@ -427,7 +427,17 @@ function updateUrl() {
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
-async function run(): Promise<boolean> {
+/** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */
+function scrollToNewest() {
+  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      for (const el of [heatmapWrap, tableWrap]) if (!el.hidden) el.scrollTo({ left: el.scrollWidth, behavior });
+    })
+  );
+}
+
+async function run(continuing = false): Promise<boolean> {
   if (busy) return false;
   setBusy(true);
   const stop = ticker(runStatus, () => 'Running');
@@ -448,6 +458,8 @@ async function run(): Promise<boolean> {
     updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
     render(true);
+    if (continuing) scrollToNewest();
+    else heatmapWrap.scrollLeft = tableWrap.scrollLeft = 0;
     return true;
   } catch (e) {
     runStatus.textContent = `Error: ${(e as Error).message}`;
@@ -466,7 +478,7 @@ async function continueRun(n: number) {
       return;
     }
     promptEl.value += res.pieces.get(id) ?? '';
-    if (!(await run())) return;
+    if (!(await run(true))) return;
   }
 }
 
