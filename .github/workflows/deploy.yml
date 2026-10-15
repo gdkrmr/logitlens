@@ -1,0 +1,80 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deploy at a time; a newer push replaces a queued one
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # the wasm only changes with the wllama fork commit, so key the cache on it
+      - name: Get wllama commit
+        id: wllama
+        run: echo "sha=$(git -C third_party/wllama rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore wasm build
+        id: wasm-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            third_party/wllama/src/wasm/wllama.wasm
+            third_party/wllama/src/wasm/wllama.js
+            third_party/wllama/src/wasm/source-map.ts
+          key: wllama-wasm-${{ steps.wllama.outputs.sha }}
+
+      # Docker emsdk build, 10-20 min; only runs when the fork commit changes
+      - name: Build wasm
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        working-directory: third_party/wllama
+        run: |
+          SKIP_COMPAT=1 ./scripts/build_wasm.sh
+          test -f src/wasm/wllama.wasm
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # embeds the (possibly rebuilt) emscripten JS into the worker code
+      - name: Generate worker code
+        working-directory: third_party/wllama
+        run: ./scripts/build_worker.sh
+
+      - name: Build site
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

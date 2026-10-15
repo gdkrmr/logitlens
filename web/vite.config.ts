@@ -46,6 +46,8 @@ function localModels(): Plugin {
 }
 
 export default defineConfig({
+  // relative asset paths, so the build works at any URL path
+  base: './',
   plugins: [localModels()],
   resolve: {
     alias: { '@wllama/wllama': resolve(import.meta.dirname, '../third_party/wllama/src/index.ts') },

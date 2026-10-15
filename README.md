@@ -71,7 +71,7 @@ It prints the top-1 token per layer and position. As a sanity check it also repo
   Without them the app still works but falls back to a single thread. If they block cross-origin resources, `Cross-Origin-Embedder-Policy: credentialless` is the usual fix.
 - **`.wasm` served as `application/wasm`**, which common static hosts do by default.
 
-Cloudflare Pages and Netlify read the `_headers` file in `dist/` as-is. GitHub Pages can't set headers; use `coi-serviceworker` there. Any web server where these two headers can be added works too. The Vite dev and preview servers already send them.
+The live site, https://logitlens.gdkrmr.com, is GitHub Pages, deployed by `.github/workflows/deploy.yml` on every push to `main`. The workflow builds the wasm with Docker only when the wllama fork commit changes (cached otherwise), then builds and publishes `web/dist/`. GitHub Pages can't send the isolation headers, so the page loads `coi-serviceworker`, which adds them in the browser; on the very first visit the page reloads once while it installs. Where the server does send the headers (the Vite dev and preview servers, or Cloudflare Pages and Netlify via the `_headers` file in `dist/`), the service worker does nothing.
 
 ## License
 

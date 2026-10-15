@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "wasm": "mkdir -p public/wasm && cp ../third_party/wllama/src/wasm/wllama.wasm public/wasm/ && cp ../LICENSE public/LICENSE.txt && cp ../THIRD_PARTY_NOTICES.txt public/",
-    "dev": "npm run wasm && vite",
-    "build": "npm run wasm && tsc --noEmit && vite build",
+    "assets": "mkdir -p public/wasm && cp ../third_party/wllama/src/wasm/wllama.wasm public/wasm/ && cp ../LICENSE public/LICENSE.txt && cp ../THIRD_PARTY_NOTICES.txt public/ && cp node_modules/coi-serviceworker/coi-serviceworker.min.js public/",
+    "dev": "npm run assets && vite",
+    "build": "npm run assets && tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "coi-serviceworker": "^0.1.7",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
   },

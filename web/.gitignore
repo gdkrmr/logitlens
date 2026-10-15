@@ -3,3 +3,4 @@ dist
 public/wasm
 public/LICENSE.txt
 public/THIRD_PARTY_NOTICES.txt
+public/coi-serviceworker.min.js

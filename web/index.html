@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- adds the cross-origin isolation headers on hosts that cannot send them (GitHub Pages); no-op otherwise -->
+    <script src="coi-serviceworker.min.js"></script>
     <title>Logit Lens</title>
     <meta name="description" content="See what each layer of a GGUF language model would predict. Runs in the browser with WebGPU." />
     <script>
