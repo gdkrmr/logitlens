@@ -1,6 +1,6 @@
 // Hugging Face Hub search for GGUF repos the lens supports
 
-export const SUPPORTED_ARCHS = ['llama', 'qwen2', 'qwen3', 'qwen35', 'gemma', 'gemma2', 'gemma3', 'gemma4'];
+export const SUPPORTED_ARCHS = ['llama', 'qwen2', 'qwen3', 'qwen35', 'gemma', 'gemma2', 'gemma3', 'gemma4', 'phi2', 'phi3'];
 // the wasm heap is capped at 4 GB and also holds the KV cache and compute buffers
 export const MAX_FILE_BYTES = 3.5e9;
 
