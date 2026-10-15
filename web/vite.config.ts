@@ -54,5 +54,13 @@ export default defineConfig({
   },
   server: { headers: isolationHeaders, fs: { allow: ['..'] } },
   preview: { headers: isolationHeaders },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        impressum: resolve(import.meta.dirname, 'impressum.html'),
+      },
+    },
+  },
 });

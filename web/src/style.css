@@ -620,3 +620,45 @@ progress {
 .legal a {
   color: var(--ink-2);
 }
+
+/* legal page */
+.doc {
+  max-width: 72ch;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+}
+.doc h1 {
+  font: 300 26px/1.2 var(--display);
+  font-stretch: 112.5%;
+  letter-spacing: -0.02em;
+  margin: 8px 0 12px;
+}
+.doc h2 {
+  font: 600 13px/1.3 var(--mono);
+  font-stretch: 87.5%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 36px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.doc h3 {
+  font-size: 15px;
+  margin: 22px 0 6px;
+}
+.doc p,
+.doc li {
+  color: var(--ink);
+}
+.doc a {
+  color: var(--data);
+}
+.doc .lead,
+.doc .stand {
+  color: var(--ink-3);
+  font-size: 14px;
+}
+.doc .back {
+  font-size: 14px;
+}
