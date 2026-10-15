@@ -110,8 +110,12 @@ export class Heatmap {
     return { layer, pos };
   }
 
-  /** draw with a bottom-up reveal: embeddings first, final layer last */
-  reveal(opts: HeatmapOpts) {
+  /**
+   * draw with a bottom-up reveal: embeddings first, final layer last.
+   * Columns before fromCol are drawn complete; continuing passes the new column, since appending a token
+   * leaves the earlier positions unchanged (causal model). A running reveal is replaced, not replayed.
+   */
+  reveal(opts: HeatmapOpts, fromCol = 0) {
     cancelAnimationFrame(this.anim);
     const r = this.res;
     if (!r || reducedMotion()) return this.draw(opts);
@@ -119,13 +123,13 @@ export class Heatmap {
     const t0 = performance.now();
     const step = (now: number) => {
       const p = Math.min(1, (now - t0) / dur);
-      this.draw(opts, p * r.nLayers);
+      this.draw(opts, p * r.nLayers, fromCol);
       if (p < 1) this.anim = requestAnimationFrame(step);
     };
     this.anim = requestAnimationFrame(step);
   }
 
-  draw(opts: HeatmapOpts, rows = Infinity) {
+  draw(opts: HeatmapOpts, rows = Infinity, fromCol = 0) {
     const r = this.res;
     if (!r) return;
     if (rows === Infinity) cancelAnimationFrame(this.anim);
@@ -151,9 +155,10 @@ export class Heatmap {
     for (let l = 0; l < r.nLayers; l++) {
       const y = TOP + (r.nLayers - 1 - l) * CELL_H;
       const alpha = Math.max(0, Math.min(1, rows - l));
-      if (alpha <= 0) continue;
-      ctx.globalAlpha = alpha;
       for (let t = 0; t < r.nTokens; t++) {
+        // columns before fromCol are already known and shown complete
+        ctx.globalAlpha = t < fromCol ? 1 : alpha;
+        if (ctx.globalAlpha <= 0) continue;
         const cell = l * r.nTokens + t;
         const x = LEFT + t * CELL_W;
         const { fill, ink } = rampColor(this.value(cell, opts.mode));
@@ -189,7 +194,8 @@ export class Heatmap {
       ctx.restore();
     }
 
-    if (rows >= r.nLayers) this.drawEmergence(v('--trace'), panel);
+    // during a reveal the line covers only the complete columns, so it never disappears and comes back
+    this.drawEmergence(v('--trace'), panel, rows >= r.nLayers ? r.nTokens : fromCol);
 
     if (opts.selected) {
       const { layer, pos } = opts.selected;
@@ -237,13 +243,13 @@ export class Heatmap {
   }
 
   // step line along the lower edge of each column's emergence layer
-  private drawEmergence(color: string, ring: string) {
+  private drawEmergence(color: string, ring: string, cols: number) {
     const r = this.res!;
     const ctx = this.ctx;
     const yOf = (l: number) => TOP + (r.nLayers - l) * CELL_H;
     const path = new Path2D();
     let open = false;
-    for (let t = 0; t < r.nTokens; t++) {
+    for (let t = 0; t < cols; t++) {
       const l = this.emergence[t];
       if (l === null) {
         open = false;

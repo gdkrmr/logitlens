@@ -439,6 +439,7 @@ function scrollToNewest() {
 
 async function run(continuing = false): Promise<boolean> {
   if (busy) return false;
+  const prevTokens = res?.tokens ?? [];
   setBusy(true);
   const stop = ticker(runStatus, () => 'Running');
   try {
@@ -457,7 +458,10 @@ async function run(continuing = false): Promise<boolean> {
     renderTimings(res, ms);
     updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
-    render(true);
+    // re-tokenizing the extended prompt can change the last old token too, so animate from the first difference
+    let same = 0;
+    while (continuing && same < prevTokens.length && same < res.nTokens && prevTokens[same] === res.tokens[same]) same++;
+    render(true, Math.min(same, res.nTokens - 1));
     if (continuing) scrollToNewest();
     else heatmapWrap.scrollLeft = tableWrap.scrollLeft = 0;
     return true;
@@ -546,7 +550,7 @@ btnExportPng.onclick = () => {
   }, 'image/png');
 };
 
-function render(animate = false) {
+function render(animate = false, fromCol = 0) {
   if (!res) return;
   const mode = colorMode();
   const scale =
@@ -558,7 +562,7 @@ function render(animate = false) {
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
   if (table) renderTable();
-  else if (animate) heatmap.reveal({ mode, selected });
+  else if (animate) heatmap.reveal({ mode, selected }, fromCol);
   else heatmap.draw({ mode, selected });
 }
 
