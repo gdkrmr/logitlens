@@ -4,6 +4,7 @@ import './style.css';
 import { Wllama, type LogitLensResult } from '@wllama/wllama';
 import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
+import { ChatFormat } from './chat';
 import { SUPPORTED_ARCHS, MAX_FILE_BYTES, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
 
 // shown when the search box is empty
@@ -76,6 +77,9 @@ const cacheInfo = $<HTMLSpanElement>('cache-info');
 const btnClearCache = $<HTMLButtonElement>('btn-clear-cache');
 const downloadNotes = document.querySelectorAll<HTMLElement>('[data-download-note]');
 const promptEl = $<HTMLTextAreaElement>('prompt');
+const useChat = $<HTMLInputElement>('use-chat');
+const chatLabel = $<HTMLLabelElement>('chat-label');
+const chatNote = $<HTMLSpanElement>('chat-note');
 const btnRun = $<HTMLButtonElement>('btn-run');
 const runStatus = $<HTMLSpanElement>('run-status');
 const resultEl = $<HTMLElement>('result');
@@ -105,6 +109,14 @@ interface WordShade {
 let shadeWord: WordShade | null = null;
 let contrastWord: WordShade | null = null;
 let busy = false;
+
+// chat format (#9): the prompt becomes the user message, and Continue grows the model's reply
+let chatFormat: ChatFormat | null = null;
+let reply = '';
+let lastInput = '';
+const chatOn = () => useChat.checked && !!chatFormat;
+/** the text the lens reads */
+const lensInput = () => (chatOn() ? chatFormat!.render(promptEl.value) + reply : promptEl.value);
 
 const colorMode = (): ColorMode => (document.querySelector<HTMLInputElement>('input[name=color]:checked')!.value as ColorMode);
 const viewMode = () => document.querySelector<HTMLInputElement>('input[name=view]:checked')!.value;
@@ -301,6 +313,25 @@ function setBusy(b: boolean) {
   // stays clickable without a model, so a click can explain what to do
   btnRun.disabled = b;
   btnContinue.disabled = btnContinue5.disabled = b || !res || !wllama.isModelLoaded();
+  syncChat();
+}
+
+function syncChat() {
+  useChat.disabled = busy || !chatFormat;
+  chatLabel.title = !wllama.isModelLoaded()
+    ? 'Load a model first'
+    : chatFormat
+      ? "Wrap the prompt in the model's chat format: your prompt becomes the user message, and the last column predicts the first word of the model's reply"
+      : 'This model has no chat template. Base models usually have none.';
+  if (!chatOn()) return chatNote.replaceChildren();
+  if (!reply) return (chatNote.textContent = 'Your prompt is the user message; the last column predicts the start of the reply.');
+  const clear = Object.assign(document.createElement('button'), { type: 'button', className: 'link-btn', textContent: 'Clear reply' });
+  clear.onclick = () => {
+    reply = '';
+    syncChat();
+    updateUrl();
+  };
+  chatNote.replaceChildren('Reply so far: \u201c', Object.assign(document.createElement('span'), { className: 'tok', textContent: reply }), '\u201d ', clear);
 }
 
 /////////////////////////////////////////////
@@ -431,6 +462,8 @@ async function load(source: { url: string } | { files: File[] }) {
       loadMs = stop();
     }
     loadedUrl = 'url' in source ? source.url : null;
+    chatFormat = ChatFormat.from(wllama.getChatTemplate());
+    if (!chatFormat) useChat.checked = false;
     updateUrl();
     const meta = wllama.getModelMetadata();
     const info = wllama.getLoadedContextInfo();
@@ -456,6 +489,8 @@ function updateUrl() {
   const q = new URLSearchParams();
   if (loadedUrl) q.set('model', loadedUrl.startsWith(location.origin) ? loadedUrl.slice(location.origin.length) : loadedUrl);
   if (promptEl.value) q.set('prompt', promptEl.value);
+  if (useChat.checked) q.set('chat', '1');
+  if (useChat.checked && reply) q.set('reply', reply);
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
@@ -493,7 +528,8 @@ async function run(continuing = false): Promise<boolean> {
   try {
     let ms: number;
     try {
-      res = await wllama.logitLens({ prompt: promptEl.value, k: 5 });
+      lastInput = lensInput();
+      res = await wllama.logitLens({ prompt: lastInput, k: 5 });
     } finally {
       ms = stop();
     }
@@ -516,7 +552,11 @@ async function run(continuing = false): Promise<boolean> {
     return true;
   } catch (e) {
     if (/loadModel\(\) is not yet called/.test((e as Error).message)) needModel();
-    else runStatus.textContent = `Error: ${(e as Error).message}`;
+    else {
+      const msg = (e as Error).message;
+      // the token limit counts the tokens the chat format adds
+      runStatus.textContent = `Error: ${msg}${chatOn() && /limit/.test(msg) ? ' The chat format adds tokens of its own.' : ''}`;
+    }
     return false;
   } finally {
     setBusy(false);
@@ -528,10 +568,12 @@ async function continueRun(n: number) {
   for (let i = 0; i < n && res; i++) {
     const id = res.topIds[((res.nLayers - 1) * res.nTokens + res.nTokens - 1) * res.k];
     if (wllama.isTokenEOG(id)) {
-      runStatus.textContent = 'The model predicts the end of the text here.';
+      runStatus.textContent = chatOn() ? 'The model predicts the end of its reply here.' : 'The model predicts the end of the text here.';
       return;
     }
-    promptEl.value += res.pieces.get(id) ?? '';
+    // in chat format the prediction continues the reply, so the prompt is wrapped only once
+    if (chatOn()) reply += res.pieces.get(id) ?? '';
+    else promptEl.value += res.pieces.get(id) ?? '';
     if (!(await run(true))) return;
   }
 }
@@ -583,6 +625,7 @@ btnExportJson.onclick = () => {
   const data = {
     model: loadedUrl ?? 'local file',
     prompt: promptEl.value,
+    ...(chatOn() && { chat: true, reply, input: lastInput }),
     tokens: r.tokens.map((id) => ({ token: piece(id), id })),
     note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1); entropy and kl in nats, kl = KL(final layer || this layer) at the same position',
     layers,
@@ -915,6 +958,12 @@ fileInput.onchange = () => {
 btnRun.onclick = () => run();
 btnContinue.onclick = () => continueRun(1);
 btnContinue5.onclick = () => continueRun(5);
+useChat.onchange = () => {
+  reply = '';
+  syncChat();
+  updateUrl();
+  if (res && wllama.isModelLoaded()) run();
+};
 promptEl.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) run();
 });
@@ -972,6 +1021,8 @@ examplesEl.replaceChildren(
     b.setAttribute('aria-pressed', 'false');
     b.onclick = () => {
       promptEl.value = ex.prompt;
+      reply = '';
+      syncChat();
       examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       exampleNote.textContent = ex.note;
       if (wllama.isModelLoaded()) run();
@@ -982,6 +1033,12 @@ examplesEl.replaceChildren(
 );
 // editing the prompt by hand leaves the example
 promptEl.addEventListener('input', () => {
+  // a new user message starts a new reply
+  if (reply) {
+    reply = '';
+    syncChat();
+    updateUrl();
+  }
   examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
   exampleNote.textContent = '';
 });
@@ -1001,6 +1058,9 @@ timingsBox.open = window.matchMedia('(min-width: 861px)').matches;
 
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
+// checked but disabled until a model with a chat template is loaded
+useChat.checked = urlParams.get('chat') === '1';
+reply = (useChat.checked && urlParams.get('reply')) || '';
 
 refreshCache().then(async () => {
   await search('');
