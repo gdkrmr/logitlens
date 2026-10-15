@@ -14,7 +14,7 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <script type="module" crossorigin src="./assets/main-BAobIDTM.js"></script>
+    <script type="module" crossorigin src="./assets/main-gtAPDB7v.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/style-poxtemHy.js">
     <link rel="stylesheet" crossorigin href="./assets/style-DYKAMEOH.css">
   </head>
@@ -126,6 +126,7 @@
               <div class="seg" role="radiogroup" aria-label="Shade cells by">
                 <label><input type="radio" name="color" value="prob" checked /> Probability</label>
                 <label><input type="radio" name="color" value="entropy" /> Entropy</label>
+                <label title="How far this layer's guesses are from the final layer's (KL divergence)"><input type="radio" name="color" value="kl" /> KL</label>
                 <label title="Pick a word in the trace below first"><input type="radio" name="color" value="word" disabled /> Word</label>
                 <label title="Pick two words in the trace below first"><input type="radio" name="color" value="contrast" disabled /> Contrast</label>
               </div>
@@ -148,6 +149,7 @@
               <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
               <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. Darker means more confident.</li>
               <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
+              <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: darker means the layer already thinks like the final answer.</li>
               <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>
             </ul>
           </details>
