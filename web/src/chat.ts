@@ -11,11 +11,13 @@ export class ChatFormat {
     this.tpl = new Template(source);
   }
 
-  /** null if the template is missing or does not parse */
+  /** null if the template is missing, does not parse, or fails a trial render */
   static from(source: string | null): ChatFormat | null {
     if (!source) return null;
     try {
-      return new ChatFormat(source);
+      const f = new ChatFormat(source);
+      f.render('');
+      return f;
     } catch {
       return null;
     }
@@ -32,4 +34,3 @@ export class ChatFormat {
     });
   }
 }
-

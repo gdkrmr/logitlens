@@ -1034,6 +1034,7 @@ promptEl.addEventListener('input', () => {
   if (reply) {
     reply = '';
     syncChat();
+    updateUrl();
   }
   examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
   exampleNote.textContent = '';
