@@ -1,6 +1,6 @@
 # Logit lens
 
-A browser-based logit lens for GGUF models, built on a fork of wllama (llama.cpp in wasm with WebGPU). Feature ideas and open items are tracked as [GitHub issues](https://github.com/gdkrmr/logitlens/issues).
+A browser-based logit lens for GGUF models, built on a fork of wllama (llama.cpp in wasm with WebGPU). Live at https://logitlens.gdkrmr.com, source at https://github.com/gdkrmr/logitlens. Feature ideas and open items are tracked as [GitHub issues](https://github.com/gdkrmr/logitlens/issues).
 
 ## Layout
 

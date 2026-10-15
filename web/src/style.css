@@ -619,6 +619,7 @@ progress {
 }
 .legal a {
   color: var(--ink-2);
+  white-space: nowrap;
 }
 
 /* legal page */
