@@ -36,7 +36,15 @@ const emptyTitle = $<HTMLParagraphElement>('empty-title');
 const fileInput = $<HTMLInputElement>('file-input');
 const useGpu = $<HTMLInputElement>('use-gpu');
 const modelStatus = $<HTMLSpanElement>('model-status');
-const progress = $<HTMLProgressElement>('progress');
+const loadPanel = $<HTMLElement>('load-panel');
+const loadPhase = $<HTMLParagraphElement>('load-phase');
+const loadBar = $<HTMLDivElement>('load-bar');
+const loadDetail = $<HTMLParagraphElement>('load-detail');
+const btnCancel = $<HTMLButtonElement>('btn-cancel');
+const cacheRow = $<HTMLDivElement>('cache-row');
+const cacheInfo = $<HTMLSpanElement>('cache-info');
+const btnClearCache = $<HTMLButtonElement>('btn-clear-cache');
+const downloadNotes = document.querySelectorAll<HTMLElement>('[data-download-note]');
 const promptEl = $<HTMLTextAreaElement>('prompt');
 const btnRun = $<HTMLButtonElement>('btn-run');
 const runStatus = $<HTMLSpanElement>('run-status');
@@ -69,12 +77,18 @@ const piece = (id: number) => showPiece(res?.pieces.get(id));
 // model search
 
 let cachedUrls = new Set<string>();
+let cachedBytes = 0;
 let shownRepos: RepoInfo[] = [];
 let selectedRepo: string | null = null;
 let searchCtl: AbortController | null = null;
 let filesCtl: AbortController | null = null;
 let selectedUrl = '';
 let selectedLabel = '';
+let selectedSize = NaN;
+let confirmUrl: string | null = null; // set after the first click on a large download
+
+const CONFIRM_BYTES = 1e9;
+const needsConfirm = () => !cachedUrls.has(selectedUrl) && selectedSize >= CONFIRM_BYTES;
 
 // both load buttons follow the selected file; the empty-state one is the first-visit shortcut
 function syncLoad() {
@@ -82,17 +96,34 @@ function syncLoad() {
   btnLoad.disabled = busy || !selectedUrl;
   btnLoadEmpty.disabled = busy || !selectedUrl;
   btnLoadEmpty.hidden = loaded || !selectedUrl;
-  btnLoadEmpty.textContent = `Load ${selectedLabel}`;
+  const confirming = confirmUrl === selectedUrl && needsConfirm();
+  btnLoad.textContent = confirming ? `Confirm download \u00b7 ${fmtBytes(selectedSize)}` : 'Load model';
+  btnLoadEmpty.textContent = confirming ? `Confirm download \u00b7 ${fmtBytes(selectedSize)}` : `Load ${selectedLabel}`;
+  let note = '';
+  if (selectedUrl && cachedUrls.has(selectedUrl)) {
+    note = "Loads from your browser's cache, no download.";
+  } else if (selectedUrl) {
+    const size = Number.isNaN(selectedSize) ? '' : `${fmtBytes(selectedSize)} `;
+    note = `Downloads ${size}from ${new URL(selectedUrl).host} over your connection. The file is then kept in your browser for later visits.`;
+    if (confirming) note += ' Click again to start the download, or pick a smaller quantization.';
+    else if (needsConfirm()) note += ' Files this large ask for a second click.';
+  }
+  downloadNotes.forEach((el) => (el.textContent = note));
   emptyTitle.textContent = loaded ? 'Model loaded. Run the lens to see the readout.' : 'Load a model to start.';
 }
 
 async function refreshCache() {
   try {
-    cachedUrls = new Set((await wllama.modelManager.getModels()).map((m) => m.url));
+    const models = await wllama.modelManager.getModels();
+    cachedUrls = new Set(models.map((m) => m.url));
+    cachedBytes = models.reduce((a, m) => a + m.size, 0);
   } catch {
     // OPFS unavailable, no cache status
     cachedUrls = new Set();
+    cachedBytes = 0;
   }
+  cacheRow.hidden = cachedUrls.size === 0;
+  cacheInfo.textContent = `${cachedUrls.size} ${cachedUrls.size === 1 ? 'model' : 'models'} cached in this browser, ${fmtBytes(cachedBytes)}.`;
 }
 
 const repoHasCache = (id: string) => [...cachedUrls].some((u) => u.startsWith(`https://huggingface.co/${id}/`));
@@ -183,10 +214,13 @@ async function selectRepo(r: RepoInfo) {
         input.onchange = () => {
           selectedUrl = f.url;
           selectedLabel = label.dataset.label!;
+          selectedSize = f.size;
+          confirmUrl = null;
           syncLoad();
         };
         const size = Number.isNaN(f.size) ? 'local' : `${fmtBytes(f.size)}${f.shards > 1 ? ` \u00b7 ${f.shards} parts` : ''}${tooBig ? ' \u00b7 too large' : ''}`;
         label.dataset.label = r.id === DIRECT_ID ? f.path.replace(/\.gguf$/i, '') : `${repoName} \u00b7 ${quantLabel(f.path)} \u00b7 ${fmtBytes(f.size)}`;
+        label.dataset.size = String(f.size);
         label.append(input);
         label.insertAdjacentHTML('beforeend', `<span class="q">${esc(quantLabel(f.path))}</span><span class="s${cachedUrls.has(f.url) ? ' cached' : ''}">${size}</span>`);
         return label;
@@ -194,6 +228,8 @@ async function selectRepo(r: RepoInfo) {
     );
     selectedUrl = def?.url ?? '';
     selectedLabel = quantList.querySelector<HTMLLabelElement>('label:has(input:checked)')?.dataset.label ?? '';
+    selectedSize = def?.size ?? NaN;
+    confirmUrl = null;
     syncLoad();
   } catch (e) {
     if (!ctl.signal.aborted) setQuantStatus(`Could not list files: ${(e as Error).message}`);
@@ -208,6 +244,7 @@ searchInput.addEventListener('input', () => {
 
 function setBusy(b: boolean) {
   busy = b;
+  btnClearCache.disabled = b;
   syncLoad();
   fileInput.disabled = b;
   btnRun.disabled = b || !wllama.isModelLoaded();
@@ -245,32 +282,96 @@ function renderTimings(r: LogitLensResult, totalMs: number) {
   timingsEl.hidden = false;
 }
 
+/** keep the repo list and chips in step with the cache, without changing the selection */
+async function refreshSelection() {
+  await refreshCache();
+  renderRepos();
+  const keep = selectedUrl;
+  const repo = shownRepos.find((r) => r.id === selectedRepo);
+  if (repo) await selectRepo(repo);
+  const input = quantList.querySelector<HTMLInputElement>(`input[value="${CSS.escape(keep)}"]`);
+  if (input) {
+    input.checked = true;
+    const label = input.closest('label')!;
+    selectedUrl = keep;
+    selectedLabel = label.dataset.label!;
+    selectedSize = Number(label.dataset.size);
+  }
+  syncLoad();
+}
+
+function setBar(fraction: number | null) {
+  loadBar.classList.toggle('indeterminate', fraction === null);
+  const pct = fraction === null ? 0 : Math.round(fraction * 1000) / 10;
+  (loadBar.firstElementChild as HTMLElement).style.width = fraction === null ? '' : `${pct}%`;
+  if (fraction === null) loadBar.removeAttribute('aria-valuenow');
+  else loadBar.setAttribute('aria-valuenow', String(pct));
+}
+
+const fmtDuration = (s: number) => (s < 60 ? `${Math.ceil(s)} s` : `${Math.floor(s / 60)} min ${Math.ceil(s % 60)} s`);
+
+let loadCtl: AbortController | null = null;
+btnCancel.onclick = () => loadCtl?.abort();
+
 async function load(source: { url: string } | { files: File[] }) {
   setBusy(true);
-  progress.hidden = false;
-  progress.value = 0;
+  const ctl = (loadCtl = new AbortController());
+  const fromCache = 'url' in source && cachedUrls.has(source.url);
+  const host = 'url' in source ? new URL(source.url).host : '';
+  const loadingPhase = 'Loading the model into memory';
+  loadPanel.hidden = false;
+  emptyEl.hidden = true;
+  btnCancel.hidden = !('url' in source) || fromCache;
+  loadPhase.textContent = 'url' in source ? (fromCache ? "Reading the model from your browser's cache" : `Downloading from ${host}`) : 'Opening the local file';
+  loadDetail.textContent = 'Starting...';
+  setBar('url' in source && !fromCache ? 0 : null);
   try {
-    if (wllama.isModelLoaded()) {
-      await wllama.exit();
-      wllama = new Wllama(WASM, { suppressNativeLog: true });
-    }
     let phase = 'Loading';
     const stop = ticker(modelStatus, () => phase);
+    // transfer rate as a moving average, so the time estimate does not jump around
+    let lastT = performance.now();
+    let lastBytes = 0;
+    let rate = 0;
     const params = {
       n_ctx: 256,
       n_gpu_layers: useGpu.checked ? 999 : 0,
+      signal: ctl.signal,
       progressCallback: ({ loaded, total }: { loaded: number; total: number }) => {
-        progress.value = total ? loaded / total : 0;
-        phase = loaded < total ? `Downloading ${(loaded / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB,` : 'Loading';
+        if (fromCache || !total) return;
+        if (loaded >= total) {
+          phase = 'Loading';
+          btnCancel.hidden = true;
+          loadPhase.textContent = loadingPhase;
+          loadDetail.textContent = `Downloaded ${fmtBytes(total)}. Setting up the model${useGpu.checked ? ' and WebGPU' : ''}; this can take a few seconds.`;
+          setBar(null);
+          return;
+        }
+        const now = performance.now();
+        const dt = (now - lastT) / 1000;
+        if (dt > 0.2) {
+          const r = (loaded - lastBytes) / dt;
+          rate = rate ? 0.7 * rate + 0.3 * r : r;
+          lastT = now;
+          lastBytes = loaded;
+        }
+        phase = `Downloading ${(loaded / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB,`;
+        setBar(loaded / total);
+        const eta = rate > 0 ? ` \u00b7 about ${fmtDuration((total - loaded) / rate)} left` : '';
+        loadDetail.textContent = `${fmtBytes(loaded)} of ${fmtBytes(total)} \u00b7 ${Math.round((loaded / total) * 100)}%${rate > 0 ? ` \u00b7 ${(rate / 1e6).toFixed(1)} MB/s` : ''}${eta}`;
       },
     };
+    if (fromCache || !('url' in source)) {
+      loadDetail.textContent = `Setting up the model${useGpu.checked ? ' and WebGPU' : ''}; this can take a few seconds.`;
+    }
     try {
-      if ('url' in source) {
-        await wllama.loadModelFromUrl(source.url, params);
-      } else {
-        progress.hidden = true;
-        await wllama.loadModel(source.files, params);
+      // download completely before unloading the current model, so a cancelled download keeps it
+      const input = 'url' in source ? await wllama.modelManager.getModelOrDownload({ url: source.url }, params) : source.files;
+      btnCancel.hidden = true;
+      if (wllama.isModelLoaded()) {
+        await wllama.exit();
+        wllama = new Wllama(WASM, { suppressNativeLog: true });
       }
+      await wllama.loadModel(input, params);
     } finally {
       loadMs = stop();
     }
@@ -280,22 +381,14 @@ async function load(source: { url: string } | { files: File[] }) {
     const name = meta.meta['general.name'] ?? ('url' in source ? source.url.split('/').pop() : source.files[0].name);
     modelStatus.textContent = `${name} (${arch}, ${info.n_layer} layers) loaded in ${fmtMs(loadMs!)}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}.`;
   } catch (e) {
-    modelStatus.textContent = `Load failed: ${(e as Error).message}`;
+    const kept = wllama.isModelLoaded() ? ' The previous model is still loaded.' : '';
+    modelStatus.textContent = ctl.signal.aborted ? `Download cancelled.${kept}` : `Load failed: ${(e as Error).message}`;
   } finally {
-    progress.hidden = true;
+    loadCtl = null;
+    loadPanel.hidden = true;
+    emptyEl.hidden = !resultEl.hidden;
     setBusy(false);
-    await refreshCache();
-    renderRepos();
-    const keep = selectedUrl;
-    const repo = shownRepos.find((r) => r.id === selectedRepo);
-    if (repo) await selectRepo(repo);
-    const input = quantList.querySelector<HTMLInputElement>(`input[value="${CSS.escape(keep)}"]`);
-    if (input) {
-      input.checked = true;
-      selectedUrl = keep;
-      selectedLabel = input.closest('label')!.dataset.label!;
-    }
-    syncLoad();
+    await refreshSelection();
   }
 }
 
@@ -464,7 +557,42 @@ canvas.addEventListener('keydown', (ev) => {
 });
 canvas.addEventListener('blur', () => (tooltip.hidden = true));
 
-btnLoad.onclick = btnLoadEmpty.onclick = () => selectedUrl && load({ url: selectedUrl });
+btnLoad.onclick = btnLoadEmpty.onclick = () => {
+  if (!selectedUrl) return;
+  if (needsConfirm() && confirmUrl !== selectedUrl) {
+    confirmUrl = selectedUrl;
+    return syncLoad();
+  }
+  confirmUrl = null;
+  load({ url: selectedUrl });
+};
+
+// two clicks: the first arms the button, the second deletes; it disarms itself after a few seconds
+let clearTimer = 0;
+btnClearCache.onclick = async () => {
+  if (!btnClearCache.classList.contains('armed')) {
+    btnClearCache.classList.add('armed');
+    btnClearCache.textContent = `Delete ${fmtBytes(cachedBytes)}? Click again`;
+    clearTimer = window.setTimeout(() => {
+      btnClearCache.classList.remove('armed');
+      btnClearCache.textContent = 'Delete cached models';
+    }, 4000);
+    return;
+  }
+  clearTimeout(clearTimer);
+  btnClearCache.classList.remove('armed');
+  btnClearCache.textContent = 'Delete cached models';
+  btnClearCache.disabled = true;
+  try {
+    await wllama.modelManager.clear();
+    modelStatus.textContent = wllama.isModelLoaded() ? 'Cached models deleted. The loaded model stays usable until you reload the page.' : 'Cached models deleted.';
+  } catch (e) {
+    modelStatus.textContent = `Could not delete cached models: ${(e as Error).message}`;
+  } finally {
+    btnClearCache.disabled = false;
+    await refreshSelection();
+  }
+};
 fileInput.onchange = () => {
   if (fileInput.files?.length) load({ files: Array.from(fileInput.files) });
 };

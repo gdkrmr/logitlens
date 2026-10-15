@@ -43,9 +43,13 @@
               <span>Open .gguf file</span>
             </label>
           </div>
+          <p class="hint download-note" data-download-note></p>
           <label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU</label>
-          <progress id="progress" max="1" value="0" hidden></progress>
           <p id="model-status" class="status" role="status">No model loaded.</p>
+          <div id="cache-row" class="cache-row" hidden>
+            <span id="cache-info"></span>
+            <button id="btn-clear-cache" type="button" class="link-btn">Delete cached models</button>
+          </div>
         </section>
 
         <footer class="rail-foot">
@@ -70,10 +74,20 @@
           <dl id="timings" class="timings" hidden></dl>
         </section>
 
+        <section id="load-panel" class="load-panel" hidden aria-labelledby="load-phase">
+          <div class="load-head">
+            <p id="load-phase" class="load-phase"></p>
+            <button id="btn-cancel" type="button" class="btn btn-quiet">Cancel download</button>
+          </div>
+          <div id="load-bar" class="bar" role="progressbar" aria-labelledby="load-phase" aria-valuemin="0" aria-valuemax="100"><div class="bar-fill"></div></div>
+          <p id="load-detail" class="load-detail"></p>
+        </section>
+
         <section id="empty" class="empty">
           <p class="empty-title" id="empty-title">Load a model to start.</p>
           <p class="empty-note">SmolLM2 135M is preselected because it is a small download. Larger models (0.5 to 1B parameters) give clearer readouts in the middle layers.</p>
           <p class="empty-action"><button id="btn-load-empty" type="button" class="btn" hidden></button></p>
+          <p class="hint download-note empty-download-note" data-download-note></p>
           <p>Each column is one token of your prompt. Rows are the model's layers, from the token embeddings at the bottom to the final layer at the top. Each cell shows the token that layer would predict next, shaded by how confident it is.</p>
         </section>
 
