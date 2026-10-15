@@ -76,8 +76,8 @@ int main(int argc, char **argv)
   lens_capture cap;
   auto cparams = llama_context_default_params();
   cparams.n_ctx = std::max(512, n);
-  cparams.n_batch = cparams.n_ctx;
-  cparams.n_ubatch = cparams.n_ctx;
+  cparams.n_batch = lens_batch;
+  cparams.n_ubatch = lens_batch;
   cparams.n_seq_max = 1;
   cparams.cb_eval = lens_cb_eval;
   cparams.cb_eval_user_data = &cap;
@@ -92,18 +92,26 @@ int main(int argc, char **argv)
   const int64_t t1 = ggml_time_us();
 
   // sanity check: last lens layer must agree with the model's own prediction
+  // the lens pass skips the output head, so run a plain pass for the logits
   const int n_vocab = llama_vocab_n_tokens(vocab);
   int mismatches = 0;
-  for (int t = 0; t < out.n_tokens; t++)
+  llama_memory_clear(llama_get_memory(lctx), true);
+  for (int i0 = 0; i0 < out.n_tokens; i0 += lens_batch)
   {
-    const float *logits = llama_get_logits_ith(lctx, t);
-    int best = 0;
-    for (int v = 1; v < n_vocab; v++)
-      if (logits[v] > logits[best])
-        best = v;
-    const int row = (out.n_layers - 1) * out.n_tokens + t;
-    if (out.res.top_ids[row * k] != best)
-      mismatches++;
+    const int nb = std::min(lens_batch, out.n_tokens - i0);
+    if (lens_decode(lctx, tokens, i0, nb) != 0)
+      return 1;
+    for (int t = 0; t < nb; t++)
+    {
+      const float *logits = llama_get_logits_ith(lctx, t);
+      int best = 0;
+      for (int v = 1; v < n_vocab; v++)
+        if (logits[v] > logits[best])
+          best = v;
+      const int row = (out.n_layers - 1) * out.n_tokens + i0 + t;
+      if (out.res.top_ids[row * k] != best)
+        mismatches++;
+    }
   }
   float last_kl = 0;
   for (int t = 0; t < out.n_tokens; t++)

@@ -176,9 +176,10 @@ export class Heatmap {
     const r = this.res;
     if (!r) return;
     if (rows === Infinity) cancelAnimationFrame(this.anim);
-    const dpr = window.devicePixelRatio || 1;
     const w = LEFT + r.nTokens * CELL_W + 4;
     const h = TOP + r.nLayers * CELL_H + BOTTOM;
+    // canvases wider than 32767 device px stay blank; long prompts trade sharpness for that
+    const dpr = Math.min(window.devicePixelRatio || 1, 30000 / (w + AXIS_W));
     if (this.canvas.width !== Math.round(w * dpr) || this.canvas.height !== Math.round(h * dpr)) {
       this.canvas.width = Math.round(w * dpr);
       this.canvas.height = Math.round(h * dpr);
