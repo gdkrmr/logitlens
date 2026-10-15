@@ -40,6 +40,7 @@ const EXAMPLES = [
   { label: 'Opposites', prompt: 'The opposite of hot is', note: '"cold" shows up in the middle layers, but the model keeps hesitating before it commits.' },
 ];
 const modelCurrent = $<HTMLParagraphElement>('model-current');
+const modelIndicator = $<HTMLParagraphElement>('model-indicator');
 const railLoad = $<HTMLDivElement>('rail-load');
 const modelOptions = $<HTMLDetailsElement>('model-options');
 const btnContinue = $<HTMLButtonElement>('btn-continue');
@@ -435,6 +436,8 @@ async function load(source: { url: string } | { files: File[] }) {
     const info = wllama.getLoadedContextInfo();
     const arch = meta.meta['general.architecture'] ?? '?';
     const name = meta.meta['general.name'] ?? ('url' in source ? source.url.split('/').pop() : source.files[0].name);
+    modelIndicator.querySelector('a')!.textContent = `${name} \u00b7 loaded`;
+    modelIndicator.hidden = false;
     modelStatus.textContent = `${name} (${arch}, ${info.n_layer} layers) loaded in ${fmtMs(loadMs!)}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}.`;
   } catch (e) {
     const kept = wllama.isModelLoaded() ? ' The previous model is still loaded.' : '';
@@ -457,8 +460,8 @@ function updateUrl() {
 }
 
 /** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */
-function scrollToNewest() {
-  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+function scrollToNewest(smooth = true) {
+  const behavior: ScrollBehavior = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto';
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       for (const el of [heatmapWrap, tableWrap]) if (!el.hidden) el.scrollTo({ left: el.scrollWidth, behavior });
@@ -508,8 +511,8 @@ async function run(continuing = false): Promise<boolean> {
     let same = 0;
     while (continuing && same < prevTokens.length && same < res.nTokens && prevTokens[same] === res.tokens[same]) same++;
     render(true, Math.min(same, res.nTokens - 1));
-    if (continuing) scrollToNewest();
-    else heatmapWrap.scrollLeft = tableWrap.scrollLeft = 0;
+    // the last column holds the final prediction, so start there; the layer axis stays pinned on the left
+    scrollToNewest(continuing);
     return true;
   } catch (e) {
     if (/loadModel\(\) is not yet called/.test((e as Error).message)) needModel();
