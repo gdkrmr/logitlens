@@ -127,7 +127,10 @@
           </div>
           <div id="legend" class="legend"></div>
           <div id="heatmap-wrap" class="scroll-x">
-            <canvas id="heatmap" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
+            <div class="heatmap-row">
+              <canvas id="heatmap-axis" aria-hidden="true"></canvas>
+              <canvas id="heatmap" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
+            </div>
           </div>
           <div id="table-wrap" class="scroll-x" hidden></div>
           <p class="hint">Hover a cell for its top 5 tokens. Click a cell to trace a token through the layers.</p>

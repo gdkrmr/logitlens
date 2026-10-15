@@ -72,7 +72,7 @@ const tracePlot = $<HTMLDivElement>('trace-plot');
 
 const WASM = { default: new URL('wasm/wllama.wasm', document.baseURI).href };
 let wllama = new Wllama(WASM, { suppressNativeLog: true });
-const heatmap = new Heatmap(canvas);
+const heatmap = new Heatmap(canvas, $<HTMLCanvasElement>('heatmap-axis'));
 let res: LogitLensResult | null = null;
 let selected: { layer: number; pos: number } | null = null;
 let tracedPos: number | null = null;
@@ -540,7 +540,7 @@ btnExportPng.onclick = () => {
   if (!res) return;
   // draw without the selection outline, then restore the on-screen state
   heatmap.draw({ mode: colorMode(), selected: null });
-  canvas.toBlob((blob) => {
+  heatmap.composite().toBlob((blob) => {
     if (blob) download(blob, `${fileStem()}.png`);
     render();
   }, 'image/png');

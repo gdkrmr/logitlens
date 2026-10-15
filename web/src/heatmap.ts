@@ -49,7 +49,9 @@ export interface HeatmapOpts {
 
 export const CELL_W = 84;
 export const CELL_H = 22;
-export const LEFT = 40;
+// the layer axis is a separate sticky canvas, AXIS_W wide; LEFT is the cell canvas's own margin
+export const AXIS_W = 40;
+export const LEFT = 2;
 export const TOP = 8;
 const BOTTOM = 30;
 const FONT = '"Martian Mono Variable", ui-monospace, monospace';
@@ -58,14 +60,19 @@ const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)'
 
 export class Heatmap {
   private ctx: CanvasRenderingContext2D;
+  private axisCtx: CanvasRenderingContext2D;
   res: LogitLensResult | null = null;
   maxEntropy = 1;
   // per position: lowest layer from which the top token equals the target all the way up, or null
   emergence: (number | null)[] = [];
   private anim = 0;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(
+    private canvas: HTMLCanvasElement,
+    private axis: HTMLCanvasElement
+  ) {
     this.ctx = canvas.getContext('2d')!;
+    this.axisCtx = axis.getContext('2d')!;
   }
 
   setResult(res: LogitLensResult) {
@@ -136,18 +143,13 @@ export class Heatmap {
     const css = getComputedStyle(document.documentElement);
     const v = (name: string) => css.getPropertyValue(name).trim();
     const panel = v('--panel');
+    this.drawAxis(dpr, h, panel, v('--ink-3'));
     ctx.fillStyle = panel;
     ctx.fillRect(0, 0, w, h);
     ctx.textBaseline = 'middle';
 
     for (let l = 0; l < r.nLayers; l++) {
       const y = TOP + (r.nLayers - 1 - l) * CELL_H;
-      if (r.nLayers <= 16 || l % 2 === 0 || l === r.nLayers - 1) {
-        ctx.fillStyle = v('--ink-3');
-        ctx.font = `400 condensed 11px ${FONT}`;
-        ctx.textAlign = 'right';
-        ctx.fillText(layerLabel(l), LEFT - 7, y + CELL_H / 2);
-      }
       const alpha = Math.max(0, Math.min(1, rows - l));
       if (alpha <= 0) continue;
       ctx.globalAlpha = alpha;
@@ -197,6 +199,41 @@ export class Heatmap {
       ctx.roundRect(LEFT + pos * CELL_W + 1, TOP + (r.nLayers - 1 - layer) * CELL_H + 1, CELL_W - 2, CELL_H - 2, 3);
       ctx.stroke();
     }
+  }
+
+  private drawAxis(dpr: number, h: number, panel: string, ink: string) {
+    const r = this.res!;
+    const a = this.axis;
+    if (a.width !== Math.round(AXIS_W * dpr) || a.height !== Math.round(h * dpr)) {
+      a.width = Math.round(AXIS_W * dpr);
+      a.height = Math.round(h * dpr);
+      a.style.width = `${AXIS_W}px`;
+      a.style.height = `${h}px`;
+    }
+    const ctx = this.axisCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = panel;
+    ctx.fillRect(0, 0, AXIS_W, h);
+    ctx.fillStyle = ink;
+    ctx.font = `400 condensed 11px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let l = 0; l < r.nLayers; l++) {
+      // only label every other layer when the grid is tall
+      if (r.nLayers > 16 && l % 2 !== 0 && l !== r.nLayers - 1) continue;
+      ctx.fillText(layerLabel(l), AXIS_W - 5, TOP + (r.nLayers - 1 - l) * CELL_H + CELL_H / 2);
+    }
+  }
+
+  /** axis and cells as one canvas, for export */
+  composite(): HTMLCanvasElement {
+    const out = document.createElement('canvas');
+    out.width = this.axis.width + this.canvas.width;
+    out.height = this.canvas.height;
+    const ctx = out.getContext('2d')!;
+    ctx.drawImage(this.axis, 0, 0);
+    ctx.drawImage(this.canvas, this.axis.width, 0);
+    return out;
   }
 
   // step line along the lower edge of each column's emergence layer

@@ -441,7 +441,7 @@ progress {
 #heatmap {
   display: block;
   cursor: crosshair;
-  border-radius: 4px;
+  border-radius: 0 4px 4px 0;
 }
 
 /* tooltip */
@@ -854,4 +854,23 @@ progress {
 .options-body .file-btn {
   justify-self: start;
   margin-top: 16px;
+}
+
+/* layer axis stays put while the cells scroll */
+.heatmap-row {
+  display: flex;
+  width: max-content;
+}
+#heatmap-axis {
+  display: block;
+  border-radius: 4px 0 0 4px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+.lens-table th[scope='row'] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--ground);
 }
