@@ -56,6 +56,17 @@ It prints the top-1 token per layer and position. As a sanity check it also repo
 - The whole model must fit in browser memory, even with GPU offload, and the wasm heap is capped at 4 GB. The model picker disables files over 3.5 GB.
 - Browsers: Chrome and Edge on desktop. The Firefox/Safari compat build is skipped (`SKIP_COMPAT=1`).
 
+## Performance
+
+Browser inference on WebGPU vs the CPU build (16 threads), measured in Chromium 153 on an AMD Ryzen AI Max (Radeon 8060S iGPU, Vulkan), October 2026. 67-token prompt, 64 generated tokens, temperature 0, prompt cache off; second of two runs.
+
+| Model (Q4_K_XL) | Prompt, WebGPU | Prompt, CPU | Generation, WebGPU | Generation, CPU |
+| --- | --- | --- | --- | --- |
+| Qwen3.5 0.8B | 206 tok/s | 92 tok/s | 31 tok/s | 39 tok/s |
+| Qwen3.5 2B | 142 tok/s | 38 tok/s | 31 tok/s | 20 tok/s |
+
+WebGPU processes prompts 2-4x faster, and the lens is a single prompt-processing pass plus the projection, so it benefits most. For token-by-token generation the per-token GPU overhead dominates on small models: the CPU build is faster at 0.8B, WebGPU at 2B.
+
 ## Deploy
 
 `web/dist/` is a static site with no backend. The host must provide:
