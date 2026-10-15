@@ -949,3 +949,27 @@ progress {
 .howto li + li {
   margin-top: 4px;
 }
+
+/* shade the grid by a word, or contrast two */
+.seg label:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 12px;
+}
+.trace-actions:empty {
+  display: none;
+}
+.trace-actions .btn {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.legend .ends {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}

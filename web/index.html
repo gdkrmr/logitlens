@@ -118,6 +118,8 @@
               <div class="seg" role="radiogroup" aria-label="Shade cells by">
                 <label><input type="radio" name="color" value="prob" checked /> Probability</label>
                 <label><input type="radio" name="color" value="entropy" /> Entropy</label>
+                <label title="Pick a word in the trace below first"><input type="radio" name="color" value="word" disabled /> Word</label>
+                <label title="Pick two words in the trace below first"><input type="radio" name="color" value="contrast" disabled /> Contrast</label>
               </div>
               <div class="seg" role="radiogroup" aria-label="View">
                 <label><input type="radio" name="view" value="heatmap" checked /> Heatmap</label>
@@ -156,6 +158,7 @@
           <h2 id="trace-h" class="label">Trace</h2>
           <p id="trace-desc" class="trace-desc"></p>
           <div id="trace-chips" class="chips" role="group" aria-label="Token to trace"></div>
+          <div id="trace-actions" class="trace-actions"></div>
           <div id="trace-plot"></div>
         </section>
       </main>

@@ -2,7 +2,7 @@ import '@fontsource-variable/martian-mono/wdth.css';
 import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
 import './style.css';
 import { Wllama, type LogitLensResult } from '@wllama/wllama';
-import { Heatmap, rampGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
+import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { SUPPORTED_ARCHS, MAX_FILE_BYTES, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
 
@@ -26,6 +26,9 @@ const DIRECT_ID = '(direct URL)';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const examplesEl = $<HTMLDivElement>('examples');
+const traceActions = $<HTMLDivElement>('trace-actions');
+const wordRadio = document.querySelector<HTMLInputElement>('input[name=color][value=word]')!;
+const contrastRadio = document.querySelector<HTMLInputElement>('input[name=color][value=contrast]')!;
 const exampleNote = $<HTMLParagraphElement>('example-note');
 const summaryEl = $<HTMLParagraphElement>('summary');
 
@@ -87,6 +90,15 @@ const heatmap = new Heatmap(canvas, $<HTMLCanvasElement>('heatmap-axis'));
 let res: LogitLensResult | null = null;
 let selected: { layer: number; pos: number } | null = null;
 let tracedPos: number | null = null;
+
+// the word the grid can be shaded by (#3), and the second word it can be contrasted with (#2)
+interface WordShade {
+  id: number;
+  probs: Float32Array;
+  ranks: Int32Array;
+}
+let shadeWord: WordShade | null = null;
+let contrastWord: WordShade | null = null;
 let busy = false;
 
 const colorMode = (): ColorMode => (document.querySelector<HTMLInputElement>('input[name=color]:checked')!.value as ColorMode);
@@ -469,6 +481,7 @@ async function run(continuing = false): Promise<boolean> {
     renderTimings(res, ms);
     updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
+    await refreshWordShades();
     // re-tokenizing the extended prompt can change the last old token too, so animate from the first difference
     let same = 0;
     while (continuing && same < prevTokens.length && same < res.nTokens && prevTokens[same] === res.tokens[same]) same++;
@@ -561,6 +574,57 @@ btnExportPng.onclick = () => {
   }, 'image/png');
 };
 
+const fmtTimes = (x: number) => (x >= 1e4 ? `${Math.round(x / 1000)}k` : x >= 100 ? String(Math.round(x)) : x.toFixed(x >= 10 ? 0 : 1));
+
+/** probability and rank of one word in every cell, by re-projecting the cached layer outputs */
+async function projectWord(id: number): Promise<WordShade> {
+  const r = await wllama.logitLens({ prompt: '', reuse: true, k: 1, targetIds: [id] });
+  return { id, probs: r.targetProbs, ranks: r.targetRanks };
+}
+
+function applyWordShades() {
+  heatmap.wordProbs = shadeWord?.probs ?? null;
+  if (shadeWord && contrastWord) {
+    const a = shadeWord.probs;
+    const b = contrastWord.probs;
+    const d = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i++) d[i] = Math.log(Math.max(a[i], 1e-30)) - Math.log(Math.max(b[i], 1e-30));
+    heatmap.setContrast(d);
+  } else heatmap.setContrast(null);
+  wordRadio.disabled = !shadeWord;
+  contrastRadio.disabled = !(shadeWord && contrastWord);
+  if ((colorMode() === 'word' && wordRadio.disabled) || (colorMode() === 'contrast' && contrastRadio.disabled)) {
+    document.querySelector<HTMLInputElement>('input[name=color][value=prob]')!.checked = true;
+  }
+}
+
+async function chooseWord(kind: 'word' | 'contrast', id: number) {
+  if (busy || !res) return;
+  setBusy(true);
+  try {
+    const w = await projectWord(id);
+    if (kind === 'word') {
+      shadeWord = w;
+      if (contrastWord?.id === id) contrastWord = null;
+    } else contrastWord = w;
+    applyWordShades();
+    (kind === 'word' ? wordRadio : contrastRadio).checked = true;
+    render();
+    if (tracedPos !== null) trace(tracedPos);
+  } catch (e) {
+    runStatus.textContent = `Error: ${(e as Error).message}`;
+  } finally {
+    setBusy(false);
+  }
+}
+
+/** after a new run the cached layer outputs changed, so recompute the chosen words */
+async function refreshWordShades() {
+  if (shadeWord) shadeWord = await projectWord(shadeWord.id);
+  if (contrastWord) contrastWord = await projectWord(contrastWord.id);
+  applyWordShades();
+}
+
 /** one plain-language sentence about the last position: final guess, confidence, where it settles */
 function renderSummary() {
   const r = res!;
@@ -593,11 +657,18 @@ function render(animate = false, fromCol = 0) {
   if (!res) return;
   renderSummary();
   const mode = colorMode();
+  const q = (w: WordShade | null) => `\u201c<span class="tok">${esc(w ? showPiece(res!.pieces.get(w.id)).trim() || showPiece(res!.pieces.get(w.id)) : '')}</span>\u201d`;
+  if (mode === 'word' && shadeWord) {
+    legend.innerHTML = `<span class="item"><span>Probability of ${q(shadeWord)}</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span></span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+  } else if (mode === 'contrast' && shadeWord && contrastWord) {
+    const n = fmtTimes(Math.exp(heatmap.diffMax));
+    legend.innerHTML = `<span class="item ends"><span>${q(contrastWord)} ${n}\u00d7 more likely</span><span class="bar" style="background:${divergingGradientCss()}"></span><span>${q(shadeWord)} ${n}\u00d7 more likely</span></span><span class="item"><span>gray: equally likely</span></span>`;
+  }
   const scale =
     mode === 'prob'
       ? `<span>Top-1 probability</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span>`
       : `<span>Entropy</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`;
-  legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+  if (mode === 'prob' || mode === 'entropy') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
@@ -622,6 +693,18 @@ function renderTable() {
   tableWrap.innerHTML = html + '</tbody></table>';
 }
 
+function wordLines(cell: number): string {
+  let s = '';
+  const w = (x: WordShade) => `<span class="tok">${esc(piece(x.id))}</span>`;
+  if (shadeWord) s += `<br>${w(shadeWord)}: rank ${shadeWord.ranks[cell] + 1}, ${pct(shadeWord.probs[cell])}`;
+  if (shadeWord && contrastWord) {
+    const d = Math.log(Math.max(shadeWord.probs[cell], 1e-30)) - Math.log(Math.max(contrastWord.probs[cell], 1e-30));
+    const [hi, lo] = d >= 0 ? [shadeWord, contrastWord] : [contrastWord, shadeWord];
+    s += `<br>${w(hi)} is ${fmtTimes(Math.exp(Math.abs(d)))}\u00d7 more likely than ${w(lo)}`;
+  }
+  return s;
+}
+
 function showTooltip(layer: number, pos: number, x: number, y: number) {
   const r = res!;
   const cell = layer * r.nTokens + pos;
@@ -633,7 +716,7 @@ function showTooltip(layer: number, pos: number, x: number, y: number) {
   tooltip.innerHTML =
     `<div class="tt-head">Layer ${layerLabel(layer)}, after <span class="tok">${esc(piece(r.tokens[pos]))}</span></div>` +
     `<table>${rows}</table>` +
-    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats<br>Final prediction <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}</div>`;
+    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(cell)}</div>`;
   tooltip.hidden = false;
   const tw = tooltip.offsetWidth;
   const th = tooltip.offsetHeight;
@@ -670,6 +753,20 @@ function trace(pos: number) {
     })
   );
   drawTrace(tracePlot, pts, tooltip, piece(target));
+
+  const quoted = (id: number) => `\u201c${showPiece(r.pieces.get(id)).trim() || showPiece(r.pieces.get(id))}\u201d`;
+  const actions: HTMLButtonElement[] = [];
+  const action = (text: string, fn: () => void) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-quiet';
+    b.textContent = text;
+    b.onclick = fn;
+    actions.push(b);
+  };
+  if (shadeWord?.id !== target) action(`Shade the whole grid by ${quoted(target)}`, () => chooseWord('word', target));
+  if (shadeWord && shadeWord.id !== target && contrastWord?.id !== target) action(`Compare ${quoted(shadeWord.id)} with ${quoted(target)}`, () => chooseWord('contrast', target));
+  traceActions.replaceChildren(...actions);
 }
 
 async function retarget(pos: number, id: number) {

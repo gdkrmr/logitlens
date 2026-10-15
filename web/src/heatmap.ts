@@ -1,6 +1,7 @@
 import type { LogitLensResult } from '@wllama/wllama';
 
-export type ColorMode = 'prob' | 'entropy';
+
+export type ColorMode = 'prob' | 'entropy' | 'word' | 'contrast';
 
 // sequential blue, light -> dark
 const BLUE = ['#cde2fb', '#b7d3f6', '#9ec5f4', '#86b6ef', '#6da7ec', '#5598e7', '#3987e5', '#2a78d6', '#256abf', '#1c5cab', '#184f95', '#104281', '#0d366b'];
@@ -14,9 +15,25 @@ export function isDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
+// diverging red (second word) <- gray -> blue (first word); validated poles, equal steps per arm
+const DIVERGING_LIGHT = ['#962221', '#d83a39', '#ec7f7c', '#f4b8b5', '#f0efec', '#b7d3f6', '#6da7ec', '#2a78d6', '#184f95'];
+const DIVERGING_DARK = ['#ee8a86', '#bb625f', '#8a4644', '#5c3a39', '#383835', '#344a66', '#3d6597', '#5585c9', '#6da7ec'];
+
+/** v in [-1,1] -> color; negative favors the second word, positive the first */
+export function divergingColor(v: number): { fill: string; ink: string } {
+  return interpolate(isDark() ? DIVERGING_DARK : DIVERGING_LIGHT, (Math.max(-1, Math.min(1, v)) + 1) / 2);
+}
+
+export function divergingGradientCss(): string {
+  return `linear-gradient(to right, ${(isDark() ? DIVERGING_DARK : DIVERGING_LIGHT).join(',')})`;
+}
+
 /** t in [0,1] -> color; low values recede toward the surface in both themes */
 export function rampColor(t: number): { fill: string; ink: string } {
-  const stops = isDark() ? [...BLUE].reverse() : BLUE;
+  return interpolate(isDark() ? [...BLUE].reverse() : BLUE, t);
+}
+
+function interpolate(stops: string[], t: number): { fill: string; ink: string } {
   const x = Math.min(1, Math.max(0, t)) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(x));
   const f = x - i;
@@ -92,9 +109,28 @@ export class Heatmap {
     }
   }
 
+  // per-cell values for the word and contrast modes, computed by re-projection in main.ts
+  wordProbs: Float32Array | null = null;
+  diff: Float32Array | null = null; // ln(p_a / p_b)
+  diffMax = 1;
+
+  setContrast(diff: Float32Array | null) {
+    this.diff = diff;
+    let m = 0;
+    if (diff) for (const d of diff) m = Math.max(m, Math.abs(d));
+    // cap at e^10 (about 22000x) so one extreme cell does not wash out the rest
+    this.diffMax = Math.min(m, 10) || 1;
+  }
+
   value(cell: number, mode: ColorMode): number {
     const r = this.res!;
+    if (mode === 'word') return this.wordProbs?.[cell] ?? 0;
+    if (mode === 'contrast') return (this.diff?.[cell] ?? 0) / this.diffMax;
     return mode === 'prob' ? r.topProbs[cell * r.k] : r.entropy[cell] / this.maxEntropy;
+  }
+
+  color(cell: number, mode: ColorMode) {
+    return mode === 'contrast' ? divergingColor(this.value(cell, mode)) : rampColor(this.value(cell, mode));
   }
 
   /** map pointer position to (layer, pos) */
@@ -161,7 +197,7 @@ export class Heatmap {
         if (ctx.globalAlpha <= 0) continue;
         const cell = l * r.nTokens + t;
         const x = LEFT + t * CELL_W;
-        const { fill, ink } = rampColor(this.value(cell, opts.mode));
+        const { fill, ink } = this.color(cell, opts.mode);
         ctx.fillStyle = fill;
         ctx.beginPath();
         ctx.roundRect(x + 1, y + 1, CELL_W - 2, CELL_H - 2, 3);
