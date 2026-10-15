@@ -973,3 +973,17 @@ progress {
   align-items: center;
   gap: 7px;
 }
+
+/* shown on preview builds of non-main branches */
+.preview-badge {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 3px 8px;
+  border: 1px solid var(--trace);
+  border-radius: 4px;
+  font: 500 12px/1.3 var(--mono);
+  font-stretch: 87.5%;
+}
+.preview-badge a {
+  color: var(--ink-2);
+}

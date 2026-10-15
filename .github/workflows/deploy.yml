@@ -1,23 +1,25 @@
 name: Deploy
 
+# main is published at the site root, every other branch at preview/<branch>/ on the gh-pages branch.
+# Only pushes to this repo run it (never pull requests from forks), so only people with write
+# access can create previews.
 on:
   push:
-    branches: [main]
+    branches-ignore: [gh-pages]
+  delete:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# one deploy at a time; a newer push replaces a queued one
-concurrency:
-  group: pages
-  cancel-in-progress: true
+  contents: write
 
 jobs:
   build:
+    if: github.event_name != 'delete' && github.repository == 'gdkrmr/logitlens'
     runs-on: ubuntu-latest
+    # a newer push to the same branch replaces a running build
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,22 +61,93 @@ jobs:
 
       - name: Build site
         working-directory: web
+        env:
+          # shown as a badge on preview builds
+          VITE_BRANCH: ${{ github.ref_name != 'main' && github.ref_name || '' }}
         run: |
           npm ci
           npm run build
 
-      - uses: actions/configure-pages@v6
-
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
+          name: site
           path: web/dist
+          retention-days: 1
 
-  deploy:
+  publish:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # one writer at a time on gh-pages; queued, never cancelled, so no update is lost
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: site
+
+      - name: Publish to gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          slug=$(echo "$REF" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
+          repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$repo" gh-pages > /dev/null; then
+            git clone --quiet --depth 1 --branch gh-pages "$repo" pages
+          else
+            git init --quiet -b gh-pages pages
+            git -C pages remote add origin "$repo"
+          fi
+          cd pages
+          if [ "$REF" = main ]; then
+            # replace everything at the root except the previews
+            find . -mindepth 1 -maxdepth 1 ! -name .git ! -name preview -exec rm -rf {} +
+            cp -r ../site/. .
+            echo logitlens.gdkrmr.com > CNAME
+            printf 'User-agent: *\nDisallow: /preview/\n' > robots.txt
+            dest="/"
+          else
+            rm -rf "preview/$slug"
+            mkdir -p "preview/$slug"
+            cp -r ../site/. "preview/$slug/"
+            dest="/preview/$slug/"
+          fi
+          # files starting with _ (e.g. _headers) would be dropped by Jekyll
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "Publish $REF at $dest (${GITHUB_SHA::7})"
+          git push --quiet origin gh-pages
+          echo "Published https://logitlens.gdkrmr.com$dest" >> "$GITHUB_STEP_SUMMARY"
+
+  # remove a branch's preview when the branch is deleted
+  cleanup:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch' && github.repository == 'gdkrmr/logitlens'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
+    steps:
+      - name: Remove preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.event.ref }}
+        run: |
+          set -euo pipefail
+          slug=$(echo "$REF" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
+          repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git ls-remote --exit-code --heads "$repo" gh-pages > /dev/null || exit 0
+          git clone --quiet --depth 1 --branch gh-pages "$repo" pages
+          cd pages
+          [ -d "preview/$slug" ] || { echo "no preview for $REF"; exit 0; }
+          git rm -r --quiet "preview/$slug"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "Remove preview of deleted branch $REF"
+          git push --quiet origin gh-pages

@@ -82,7 +82,13 @@ WebGPU processes prompts 2-4x faster, and the lens is a single prompt-processing
   Without them the app still works but falls back to a single thread. If they block cross-origin resources, `Cross-Origin-Embedder-Policy: credentialless` is the usual fix.
 - **`.wasm` served as `application/wasm`**, which common static hosts do by default.
 
-The live site, https://logitlens.gdkrmr.com, is GitHub Pages, deployed by `.github/workflows/deploy.yml` on every push to `main`. The workflow builds the wasm with Docker only when the wllama fork commit changes (cached otherwise), then builds and publishes `web/dist/`. GitHub Pages can't send the isolation headers, so the page loads `coi-serviceworker`, which adds them in the browser; on the very first visit the page reloads once while it installs. Where the server does send the headers (the Vite dev and preview servers, or Cloudflare Pages and Netlify via the `_headers` file in `dist/`), the service worker does nothing.
+The live site, https://logitlens.gdkrmr.com, is GitHub Pages served from the `gh-pages` branch, which `.github/workflows/deploy.yml` writes:
+
+- `main` is published at the site root.
+- Every other branch of this repo is published at `https://logitlens.gdkrmr.com/preview/<branch>/` (lowercased, other characters replaced by `-`), with a "Preview of branch" badge, and removed when the branch is deleted. `robots.txt` keeps previews out of search engines.
+- The workflow runs only on pushes to this repo, never on pull requests from forks, so only people with write access can publish. The domain is verified for the GitHub account, so no other account can serve Pages under it.
+
+The wasm is built with Docker only when the wllama fork commit changes (cached otherwise). GitHub Pages can't send the isolation headers, so the page loads `coi-serviceworker`, which adds them in the browser; on the very first visit the page reloads once while it installs. Where the server does send the headers (the Vite dev and preview servers, or Cloudflare Pages and Netlify via the `_headers` file in `dist/`), the service worker does nothing.
 
 ## License
 

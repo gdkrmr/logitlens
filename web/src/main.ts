@@ -938,6 +938,15 @@ promptEl.addEventListener('input', () => {
   exampleNote.textContent = '';
 });
 
+// set by the deploy workflow for non-main branches
+const previewBranch = import.meta.env.VITE_BRANCH as string | undefined;
+if (previewBranch) {
+  const badge = $<HTMLParagraphElement>('preview-badge');
+  badge.innerHTML = `Preview of branch ${esc(previewBranch)} &middot; <a href="https://logitlens.gdkrmr.com/">main site</a>`;
+  badge.hidden = false;
+  document.title = `[${previewBranch}] ${document.title}`;
+}
+
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
 
