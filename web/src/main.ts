@@ -576,7 +576,7 @@ btnExportJson.onclick = () => {
       const c = l * r.nTokens + t;
       const top = [];
       for (let j = 0; j < r.k; j++) top.push({ token: piece(r.topIds[c * r.k + j]), id: r.topIds[c * r.k + j], prob: r.topProbs[c * r.k + j] });
-      cells.push({ top, entropy: r.entropy[c], target: { token: piece(r.targetIds[c]), id: r.targetIds[c], prob: r.targetProbs[c], rank: r.targetRanks[c] } });
+      cells.push({ top, entropy: r.entropy[c], kl: r.kl[c], target: { token: piece(r.targetIds[c]), id: r.targetIds[c], prob: r.targetProbs[c], rank: r.targetRanks[c] } });
     }
     layers.push({ layer: layerLabel(l), cells });
   }
@@ -584,7 +584,7 @@ btnExportJson.onclick = () => {
     model: loadedUrl ?? 'local file',
     prompt: promptEl.value,
     tokens: r.tokens.map((id) => ({ token: piece(id), id })),
-    note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1)',
+    note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1); entropy and kl in nats, kl = KL(final layer || this layer) at the same position',
     layers,
   };
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
@@ -693,8 +693,10 @@ function render(animate = false, fromCol = 0) {
   const scale =
     mode === 'prob'
       ? `<span>Top-1 probability</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span>`
-      : `<span>Entropy</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`;
-  if (mode === 'prob' || mode === 'entropy') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+      : mode === 'entropy'
+        ? `<span>Entropy</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`
+        : `<span>Difference from the final layer (KL, log scale)</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
+  if (mode === 'prob' || mode === 'entropy' || mode === 'kl') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
@@ -742,7 +744,7 @@ function showTooltip(layer: number, pos: number, x: number, y: number) {
   tooltip.innerHTML =
     `<div class="tt-head">Layer ${layerLabel(layer)}, after <span class="tok">${esc(piece(r.tokens[pos]))}</span></div>` +
     `<table>${rows}</table>` +
-    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(cell)}</div>`;
+    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats, KL to final layer ${r.kl[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(cell)}</div>`;
   tooltip.hidden = false;
   const tw = tooltip.offsetWidth;
   const th = tooltip.offsetHeight;
@@ -801,9 +803,10 @@ async function retarget(pos: number, id: number) {
   try {
     const targets = Array.from(res.targetIds.slice(0, res.nTokens));
     targets[pos] = id;
-    const pieces = res.pieces;
+    const { pieces, kl } = res;
     const t0 = performance.now();
     res = await wllama.logitLens({ prompt: '', reuse: true, k: res.k, targetIds: targets });
+    res.kl = kl; // reuse with targets skips KL, it does not depend on them
     renderTimings(res, performance.now() - t0);
     for (const [k, v] of pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
     heatmap.setResult(res);

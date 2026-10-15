@@ -113,9 +113,12 @@ int main(int argc, char **argv)
         mismatches++;
     }
   }
+  float last_kl = 0;
+  for (int t = 0; t < out.n_tokens; t++)
+    last_kl = std::max(last_kl, out.res.kl[(out.n_layers - 1) * out.n_tokens + t]);
 
-  printf("arch=%s backend=%s tokens=%d layers=%d time=%.1f ms (forward %.1f ms, projection %.1f ms) last-layer mismatches=%d\n\n",
-         arch.c_str(), proj.backend_name(), out.n_tokens, out.n_layers, (t1 - t0) / 1000.0, out.t_decode_ms, out.t_project_ms, mismatches);
+  printf("arch=%s backend=%s tokens=%d layers=%d time=%.1f ms (forward %.1f ms, projection %.1f ms) last-layer mismatches=%d kl=%g\n\n",
+         arch.c_str(), proj.backend_name(), out.n_tokens, out.n_layers, (t1 - t0) / 1000.0, out.t_decode_ms, out.t_project_ms, mismatches, last_kl);
 
   // table: layers top to bottom (last layer first), positions across
   printf("%6s", "");
@@ -147,7 +150,7 @@ int main(int argc, char **argv)
       f << (r ? "," : "") << "{\"top\":[";
       for (int j = 0; j < k; j++)
         f << (j ? "," : "") << "[\"" << piece(vocab, out.res.top_ids[r * k + j]) << "\"," << out.res.top_probs[r * k + j] << "]";
-      f << "],\"entropy\":" << out.res.entropy[r] << ",\"target_prob\":" << out.res.target_prob[r] << ",\"target_rank\":" << out.res.target_rank[r] << "}";
+      f << "],\"entropy\":" << out.res.entropy[r] << ",\"target_prob\":" << out.res.target_prob[r] << ",\"target_rank\":" << out.res.target_rank[r] << ",\"kl\":" << out.res.kl[r] << "}";
     }
     f << "]}\n";
   }

@@ -1,7 +1,7 @@
 import type { LogitLensResult } from '@wllama/wllama';
 
 
-export type ColorMode = 'prob' | 'entropy' | 'word' | 'contrast';
+export type ColorMode = 'prob' | 'entropy' | 'kl' | 'word' | 'contrast';
 
 // sequential blue, light -> dark
 const BLUE = ['#cde2fb', '#b7d3f6', '#9ec5f4', '#86b6ef', '#6da7ec', '#5598e7', '#3987e5', '#2a78d6', '#256abf', '#1c5cab', '#184f95', '#104281', '#0d366b'];
@@ -45,8 +45,9 @@ function interpolate(stops: string[], t: number): { fill: string; ink: string } 
   return { fill: `rgb(${c[0]},${c[1]},${c[2]})`, ink: lum > 0.55 ? '#0b0b0b' : '#ffffff' };
 }
 
-export function rampGradientCss(): string {
-  const stops = isDark() ? [...BLUE].reverse() : BLUE;
+/** reversed: strong color on the left, for scales where low values matter (KL) */
+export function rampGradientCss(reversed = false): string {
+  const stops = isDark() !== reversed ? [...BLUE].reverse() : BLUE;
   return `linear-gradient(to right, ${stops.join(',')})`;
 }
 
@@ -80,6 +81,7 @@ export class Heatmap {
   private axisCtx: CanvasRenderingContext2D;
   res: LogitLensResult | null = null;
   maxEntropy = 1;
+  maxKl = 1;
   // per position: lowest layer from which the top token equals the target all the way up, or null
   emergence: (number | null)[] = [];
   private anim = 0;
@@ -97,6 +99,9 @@ export class Heatmap {
     let m = 0;
     for (const h of res.entropy) m = Math.max(m, h);
     this.maxEntropy = m || 1;
+    m = 0;
+    for (const d of res.kl) m = Math.max(m, d);
+    this.maxKl = m || 1;
     this.emergence = [];
     for (let t = 0; t < res.nTokens; t++) {
       const target = res.targetIds[(res.nLayers - 1) * res.nTokens + t];
@@ -126,6 +131,8 @@ export class Heatmap {
     const r = this.res!;
     if (mode === 'word') return this.wordProbs?.[cell] ?? 0;
     if (mode === 'contrast') return (this.diff?.[cell] ?? 0) / this.diffMax;
+    // log scale, since the embedding row is often far above the rest; KL 0 (same as the output) is strongest
+    if (mode === 'kl') return 1 - Math.log1p(r.kl[cell]) / Math.log1p(this.maxKl);
     return mode === 'prob' ? r.topProbs[cell * r.k] : r.entropy[cell] / this.maxEntropy;
   }
 
