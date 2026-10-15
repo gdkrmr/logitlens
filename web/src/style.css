@@ -1005,7 +1005,7 @@ progress {
   }
 }
 
-/* phones: title and model first, then prompt and results, theme and footer last */
+/* phones: compact title, then prompt and results, model section, theme and footer last */
 @media (max-width: 860px) {
   .rail {
     display: contents;
@@ -1018,23 +1018,49 @@ progress {
   }
   .rail > .brand {
     order: 1;
-    padding-top: 22px;
-    padding-bottom: 16px;
-    border-bottom: 0;
-  }
-  .rail > .block {
-    order: 2;
-    padding-bottom: 18px;
+    padding-top: 16px;
+    padding-bottom: 14px;
     border-bottom: 1px solid var(--rule);
   }
+  .brand .wordmark {
+    font-size: 24px;
+  }
+  .brand .tagline {
+    display: none;
+  }
   .stage {
+    order: 2;
+  }
+  .rail > .block {
     order: 3;
+    padding-top: 22px;
+    padding-bottom: 18px;
+    border-top: 1px solid var(--rule);
   }
   .rail > .rail-foot {
     order: 4;
     padding-top: 18px;
     padding-bottom: 28px;
     border-top: 1px solid var(--rule);
+  }
+  #model-h {
+    scroll-margin-top: 16px;
+  }
+}
+
+/* phones: one line naming the loaded model, linking down to the model section */
+.model-indicator {
+  font: 500 13px/1.4 var(--mono);
+  font-stretch: 87.5%;
+  margin: -4px 0 10px;
+  overflow-wrap: anywhere;
+}
+.model-indicator a {
+  color: var(--ink-2);
+}
+@media (min-width: 861px) {
+  .model-indicator {
+    display: none;
   }
 }
 
