@@ -4,14 +4,16 @@ import './style.css';
 import { Wllama, type LogitLensResult } from '@wllama/wllama';
 import { Heatmap, rampGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
-import { SUPPORTED_ARCHS, MAX_FILE_BYTES, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, type RepoInfo } from './hf';
+import { SUPPORTED_ARCHS, MAX_FILE_BYTES, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
 
 // shown when the search box is empty
+// hint: download size of the file preselected by pickDefaultFile
 const SUGGESTED: RepoInfo[] = [
-  { id: 'unsloth/Qwen3.5-0.8B-GGUF', arch: 'qwen35', params: 0.75e9, downloads: 0, gated: false },
-  { id: 'Qwen/Qwen3-0.6B-GGUF', arch: 'qwen3', params: 0.6e9, downloads: 0, gated: false },
-  { id: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', arch: 'qwen2', params: 0.5e9, downloads: 0, gated: false },
-  { id: 'unsloth/Llama-3.2-1B-Instruct-GGUF', arch: 'llama', params: 1.2e9, downloads: 0, gated: false },
+  { id: DEFAULT_REPO, arch: 'llama', params: 0.135e9, downloads: 0, gated: false, hint: 'default \u00b7 145 MB' },
+  { id: 'unsloth/Qwen3.5-0.8B-GGUF', arch: 'qwen35', params: 0.75e9, downloads: 0, gated: false, hint: '811 MB' },
+  { id: 'Qwen/Qwen3-0.6B-GGUF', arch: 'qwen3', params: 0.6e9, downloads: 0, gated: false, hint: '639 MB' },
+  { id: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', arch: 'qwen2', params: 0.5e9, downloads: 0, gated: false, hint: '676 MB' },
+  { id: 'unsloth/Llama-3.2-1B-Instruct-GGUF', arch: 'llama', params: 1.2e9, downloads: 0, gated: false, hint: '807 MB' },
 ];
 
 // ?model=<url> adds a direct-URL entry, e.g. a dev-served /local-models/... file
@@ -29,6 +31,8 @@ const quantRepo = $<HTMLSpanElement>('quant-repo');
 const emptyEl = $<HTMLElement>('empty');
 const timingsEl = $<HTMLElement>('timings');
 const btnLoad = $<HTMLButtonElement>('btn-load');
+const btnLoadEmpty = $<HTMLButtonElement>('btn-load-empty');
+const emptyTitle = $<HTMLParagraphElement>('empty-title');
 const fileInput = $<HTMLInputElement>('file-input');
 const useGpu = $<HTMLInputElement>('use-gpu');
 const modelStatus = $<HTMLSpanElement>('model-status');
@@ -70,6 +74,17 @@ let selectedRepo: string | null = null;
 let searchCtl: AbortController | null = null;
 let filesCtl: AbortController | null = null;
 let selectedUrl = '';
+let selectedLabel = '';
+
+// both load buttons follow the selected file; the empty-state one is the first-visit shortcut
+function syncLoad() {
+  const loaded = wllama.isModelLoaded();
+  btnLoad.disabled = busy || !selectedUrl;
+  btnLoadEmpty.disabled = busy || !selectedUrl;
+  btnLoadEmpty.hidden = loaded || !selectedUrl;
+  btnLoadEmpty.textContent = `Load ${selectedLabel}`;
+  emptyTitle.textContent = loaded ? 'Model loaded. Run the lens to see the readout.' : 'Load a model to start.';
+}
 
 async function refreshCache() {
   try {
@@ -94,6 +109,7 @@ function renderRepos() {
       if (r.id === DIRECT_ID) meta.push('direct URL');
       if (r.params && r.arch !== 'clip') meta.push(`${fmtParams(r.params)} params`);
       if (r.downloads) meta.push(`${fmtCount(r.downloads)} downloads`);
+      if (r.hint) meta.push(r.hint);
       if (repoHasCache(r.id) || (r.id === DIRECT_ID && cachedUrls.has(directUrl!))) meta.push('cached');
       const arch = r.arch ? `${r.arch}${supported ? '' : '?'}` : r.id === DIRECT_ID ? '' : 'unknown';
       b.innerHTML =
@@ -145,18 +161,19 @@ async function selectRepo(r: RepoInfo) {
   renderRepos();
   filesCtl?.abort();
   const ctl = (filesCtl = new AbortController());
-  btnLoad.disabled = true;
+  syncLoad();
   quantBlock.hidden = false;
   quantRepo.textContent = r.id === DIRECT_ID ? '' : `in ${r.id}`;
   const files =
     r.id === DIRECT_ID && directUrl
       ? [{ path: decodeURIComponent(directUrl.split('/').pop()!), size: NaN, shards: 1, url: directUrl }]
-      : null;
+      : (PRESET_FILES[r.id] ?? null);
   if (!files) setQuantStatus('Listing files...');
   try {
     const list = files ?? (await listGgufFiles(r.id, ctl.signal));
+    const repoName = r.id.split('/').pop()!.replace(/-GGUF$/i, '');
     if (!list.length) return setQuantStatus('This repo has no model .gguf files.');
-    const def = files ? list[0] : pickDefaultFile(list, r.params);
+    const def = r.id === DIRECT_ID ? list[0] : pickDefaultFile(list, r.params);
     quantList.replaceChildren(
       ...list.map((f) => {
         const tooBig = f.size > MAX_FILE_BYTES;
@@ -165,16 +182,19 @@ async function selectRepo(r: RepoInfo) {
         const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'quant', value: f.url, checked: f === def, disabled: tooBig });
         input.onchange = () => {
           selectedUrl = f.url;
-          btnLoad.disabled = busy;
+          selectedLabel = label.dataset.label!;
+          syncLoad();
         };
         const size = Number.isNaN(f.size) ? 'local' : `${fmtBytes(f.size)}${f.shards > 1 ? ` \u00b7 ${f.shards} parts` : ''}${tooBig ? ' \u00b7 too large' : ''}`;
+        label.dataset.label = r.id === DIRECT_ID ? f.path.replace(/\.gguf$/i, '') : `${repoName} \u00b7 ${quantLabel(f.path)} \u00b7 ${fmtBytes(f.size)}`;
         label.append(input);
         label.insertAdjacentHTML('beforeend', `<span class="q">${esc(quantLabel(f.path))}</span><span class="s${cachedUrls.has(f.url) ? ' cached' : ''}">${size}</span>`);
         return label;
       })
     );
     selectedUrl = def?.url ?? '';
-    btnLoad.disabled = busy || !selectedUrl;
+    selectedLabel = quantList.querySelector<HTMLLabelElement>('label:has(input:checked)')?.dataset.label ?? '';
+    syncLoad();
   } catch (e) {
     if (!ctl.signal.aborted) setQuantStatus(`Could not list files: ${(e as Error).message}`);
   }
@@ -188,7 +208,7 @@ searchInput.addEventListener('input', () => {
 
 function setBusy(b: boolean) {
   busy = b;
-  btnLoad.disabled = b || !selectedUrl;
+  syncLoad();
   fileInput.disabled = b;
   btnRun.disabled = b || !wllama.isModelLoaded();
 }
@@ -273,7 +293,9 @@ async function load(source: { url: string } | { files: File[] }) {
     if (input) {
       input.checked = true;
       selectedUrl = keep;
+      selectedLabel = input.closest('label')!.dataset.label!;
     }
+    syncLoad();
   }
 }
 
@@ -442,7 +464,7 @@ canvas.addEventListener('keydown', (ev) => {
 });
 canvas.addEventListener('blur', () => (tooltip.hidden = true));
 
-btnLoad.onclick = () => selectedUrl && load({ url: selectedUrl });
+btnLoad.onclick = btnLoadEmpty.onclick = () => selectedUrl && load({ url: selectedUrl });
 fileInput.onchange = () => {
   if (fileInput.files?.length) load({ files: Array.from(fileInput.files) });
 };
@@ -483,5 +505,6 @@ if (!wllama.isSupportWebGPU()) {
 }
 refreshCache().then(async () => {
   await search('');
-  if (directUrl) await selectRepo(shownRepos[0]);
+  // preselect so a first visit is one click; the default's file list ships with the app
+  await selectRepo(shownRepos.find((r) => r.id === (directUrl ? DIRECT_ID : DEFAULT_REPO))!);
 });

@@ -353,6 +353,15 @@ progress {
 .empty p {
   margin: 0;
 }
+.empty .empty-note {
+  margin-bottom: 10px;
+}
+.empty .empty-action {
+  margin: 4px 0 14px;
+}
+.empty .empty-action:has(button[hidden]) {
+  display: none;
+}
 .empty .empty-title {
   font: 500 15px/1.4 var(--mono);
   font-stretch: 100%;

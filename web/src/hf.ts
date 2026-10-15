@@ -12,6 +12,7 @@ export interface RepoInfo {
   params: number | null;
   downloads: number;
   gated: boolean;
+  hint?: string; // shown in the list, e.g. the download size of the preselected file
 }
 
 export interface GgufFile {
@@ -76,7 +77,27 @@ export async function listGgufFiles(repo: string, signal?: AbortSignal): Promise
   return [...groups.values()].sort((a, b) => a.size - b.size);
 }
 
-export const fileUrl = (repo: string, path: string) => `https://huggingface.co/${repo}/resolve/main/${path.split('/').map(encodeURIComponent).join('/')}`;
+export const DEFAULT_REPO = 'unsloth/SmolLM2-135M-Instruct-GGUF';
+
+// file lists shipped with the app, so preselecting the default model needs no request to Hugging Face
+export const PRESET_FILES: Record<string, GgufFile[]> = {
+  [DEFAULT_REPO]: (
+    [
+      ['SmolLM2-135M-Instruct-Q2_K.gguf', 88201792],
+      ['SmolLM2-135M-Instruct-Q3_K_M.gguf', 93510208],
+      ['SmolLM2-135M-Instruct-Q4_K_M.gguf', 105454144],
+      ['SmolLM2-135M-Instruct-Q5_K_M.gguf', 112103488],
+      ['SmolLM2-135M-Instruct-Q6_K.gguf', 138382912],
+      ['SmolLM2-135M-Instruct-Q8_0.gguf', 144811072],
+      ['SmolLM2-135M-Instruct-F16.gguf', 270885952],
+    ] as const
+  ).map(([path, size]) => ({ path, size, shards: 1, url: fileUrl(DEFAULT_REPO, path) })),
+};
+
+export function fileUrl(repo: string, path: string) {
+  return `https://huggingface.co/${repo}/resolve/main/${path.split('/').map(encodeURIComponent).join('/')}`;
+}
+
 
 export const isSupported = (r: RepoInfo) => !!r.arch && SUPPORTED_ARCHS.includes(r.arch);
 
