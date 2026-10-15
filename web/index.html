@@ -68,7 +68,13 @@
           <h2 id="prompt-h" class="label">Prompt</h2>
           <div class="prompt-row">
             <textarea id="prompt" rows="2" spellcheck="false">The Eiffel Tower is located in the city of</textarea>
-            <button id="btn-run" type="button" class="btn" disabled>Run lens</button>
+            <div class="prompt-actions">
+              <button id="btn-run" type="button" class="btn" disabled>Run lens</button>
+              <div class="continue" role="group" aria-label="Append the predicted token and run again">
+                <button id="btn-continue" type="button" class="btn btn-quiet" disabled title="Append the final prediction to the prompt and run again">Continue +1</button>
+                <button id="btn-continue5" type="button" class="btn btn-quiet" disabled title="Append five predictions, one at a time">+5</button>
+              </div>
+            </div>
           </div>
           <p id="run-status" class="hint" role="status">Ctrl+Enter runs the lens.</p>
           <dl id="timings" class="timings" hidden></dl>
@@ -102,6 +108,11 @@
               <div class="seg" role="radiogroup" aria-label="View">
                 <label><input type="radio" name="view" value="heatmap" checked /> Heatmap</label>
                 <label><input type="radio" name="view" value="table" /> Table</label>
+              </div>
+              <div class="share" role="group" aria-label="Share and export">
+                <button id="btn-copy-link" type="button" class="btn btn-quiet">Copy link</button>
+                <button id="btn-export-json" type="button" class="btn btn-quiet">Export JSON</button>
+                <button id="btn-export-png" type="button" class="btn btn-quiet">Export PNG</button>
               </div>
             </div>
           </div>

@@ -769,3 +769,31 @@ progress {
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
+
+/* continue and share controls */
+.prompt-actions {
+  display: grid;
+  gap: 6px;
+}
+.continue {
+  display: flex;
+  gap: 6px;
+}
+.continue .btn,
+.share .btn {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.continue .btn:first-child {
+  flex: 1;
+}
+.share {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+@media (max-width: 520px) {
+  .prompt-actions {
+    grid-template-columns: auto 1fr;
+  }
+}

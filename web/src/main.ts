@@ -17,11 +17,19 @@ const SUGGESTED: RepoInfo[] = [
 ];
 
 // ?model=<url> adds a direct-URL entry, e.g. a dev-served /local-models/... file
-const directParam = new URLSearchParams(location.search).get('model');
+const urlParams = new URLSearchParams(location.search);
+const directParam = urlParams.get('model');
 const directUrl = directParam ? new URL(directParam, location.href).href : null;
+// a shared Hugging Face link is shown as repo + quantization, parsed from the URL alone
+const directHf = directUrl ? /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\/main\/(.+)$/.exec(directUrl) : null;
 const DIRECT_ID = '(direct URL)';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const btnContinue = $<HTMLButtonElement>('btn-continue');
+const btnContinue5 = $<HTMLButtonElement>('btn-continue5');
+const btnCopyLink = $<HTMLButtonElement>('btn-copy-link');
+const btnExportJson = $<HTMLButtonElement>('btn-export-json');
+const btnExportPng = $<HTMLButtonElement>('btn-export-png');
 const searchInput = $<HTMLInputElement>('model-search');
 const repoMeta = $<HTMLDivElement>('repo-meta');
 const repoList = $<HTMLDivElement>('repo-list');
@@ -88,7 +96,10 @@ let selectedSize = NaN;
 let confirmUrl: string | null = null; // set after the first click on a large download
 
 const CONFIRM_BYTES = 1e9;
-const needsConfirm = () => !cachedUrls.has(selectedUrl) && selectedSize >= CONFIRM_BYTES;
+const needsConfirm = () =>
+  !cachedUrls.has(selectedUrl) &&
+  (selectedSize >= CONFIRM_BYTES || (Number.isNaN(selectedSize) && new URL(selectedUrl).host !== location.host));
+const confirmText = () => `Confirm download${Number.isNaN(selectedSize) ? '' : ` \u00b7 ${fmtBytes(selectedSize)}`}`;
 
 // both load buttons follow the selected file; the empty-state one is the first-visit shortcut
 function syncLoad() {
@@ -97,16 +108,17 @@ function syncLoad() {
   btnLoadEmpty.disabled = busy || !selectedUrl;
   btnLoadEmpty.hidden = loaded || !selectedUrl;
   const confirming = confirmUrl === selectedUrl && needsConfirm();
-  btnLoad.textContent = confirming ? `Confirm download \u00b7 ${fmtBytes(selectedSize)}` : 'Load model';
-  btnLoadEmpty.textContent = confirming ? `Confirm download \u00b7 ${fmtBytes(selectedSize)}` : `Load ${selectedLabel}`;
+  btnLoad.textContent = confirming ? confirmText() : 'Load model';
+  btnLoadEmpty.textContent = confirming ? confirmText() : `Load ${selectedLabel}`;
   let note = '';
   if (selectedUrl && cachedUrls.has(selectedUrl)) {
     note = "Loads from your browser's cache, no download.";
   } else if (selectedUrl) {
     const size = Number.isNaN(selectedSize) ? '' : `${fmtBytes(selectedSize)} `;
     note = `Downloads ${size}from ${new URL(selectedUrl).host} over your connection. The file is then kept in your browser for later visits.`;
+    if (!size) note += ' Its size is shown once the download starts.';
     if (confirming) note += ' Click again to start the download, or pick a smaller quantization.';
-    else if (needsConfirm()) note += ' Files this large ask for a second click.';
+    else if (needsConfirm()) note += size ? ' Files this large ask for a second click.' : ' Downloads of unknown size ask for a second click.';
   }
   downloadNotes.forEach((el) => (el.textContent = note));
   emptyTitle.textContent = loaded ? 'Model loaded. Run the lens to see the readout.' : 'Load a model to start.';
@@ -135,9 +147,9 @@ function renderRepos() {
       b.type = 'button';
       b.setAttribute('aria-pressed', String(r.id === selectedRepo));
       const supported = r.id === DIRECT_ID || isSupported(r);
-      const [owner, name] = r.id === DIRECT_ID ? ['', directUrl!.split('/').pop()!] : r.id.split('/');
+      const [owner, name] = r.id === DIRECT_ID ? (directHf ? directHf[1].split('/') : ['', directUrl!.split('/').pop()!]) : r.id.split('/');
       const meta: string[] = [];
-      if (r.id === DIRECT_ID) meta.push('direct URL');
+      if (r.id === DIRECT_ID) meta.push(directHf ? 'shared link' : 'direct URL');
       if (r.params && r.arch !== 'clip') meta.push(`${fmtParams(r.params)} params`);
       if (r.downloads) meta.push(`${fmtCount(r.downloads)} downloads`);
       if (r.hint) meta.push(r.hint);
@@ -194,7 +206,7 @@ async function selectRepo(r: RepoInfo) {
   const ctl = (filesCtl = new AbortController());
   syncLoad();
   quantBlock.hidden = false;
-  quantRepo.textContent = r.id === DIRECT_ID ? '' : `in ${r.id}`;
+  quantRepo.textContent = r.id === DIRECT_ID ? (directHf ? `in ${directHf[1]}` : '') : `in ${r.id}`;
   const files =
     r.id === DIRECT_ID && directUrl
       ? [{ path: decodeURIComponent(directUrl.split('/').pop()!), size: NaN, shards: 1, url: directUrl }]
@@ -219,7 +231,12 @@ async function selectRepo(r: RepoInfo) {
           syncLoad();
         };
         const size = Number.isNaN(f.size) ? 'local' : `${fmtBytes(f.size)}${f.shards > 1 ? ` \u00b7 ${f.shards} parts` : ''}${tooBig ? ' \u00b7 too large' : ''}`;
-        label.dataset.label = r.id === DIRECT_ID ? f.path.replace(/\.gguf$/i, '') : `${repoName} \u00b7 ${quantLabel(f.path)} \u00b7 ${fmtBytes(f.size)}`;
+        label.dataset.label =
+          r.id === DIRECT_ID
+            ? directHf
+              ? `${directHf[1].split('/').pop()!.replace(/-GGUF$/i, '')} \u00b7 ${quantLabel(f.path)}`
+              : f.path.replace(/\.gguf$/i, '')
+            : `${repoName} \u00b7 ${quantLabel(f.path)} \u00b7 ${fmtBytes(f.size)}`;
         label.dataset.size = String(f.size);
         label.append(input);
         label.insertAdjacentHTML('beforeend', `<span class="q">${esc(quantLabel(f.path))}</span><span class="s${cachedUrls.has(f.url) ? ' cached' : ''}">${size}</span>`);
@@ -248,6 +265,7 @@ function setBusy(b: boolean) {
   syncLoad();
   fileInput.disabled = b;
   btnRun.disabled = b || !wllama.isModelLoaded();
+  btnContinue.disabled = btnContinue5.disabled = b || !res || !wllama.isModelLoaded();
 }
 
 /////////////////////////////////////////////
@@ -311,6 +329,7 @@ function setBar(fraction: number | null) {
 const fmtDuration = (s: number) => (s < 60 ? `${Math.ceil(s)} s` : `${Math.floor(s / 60)} min ${Math.ceil(s % 60)} s`);
 
 let loadCtl: AbortController | null = null;
+let loadedUrl: string | null = null; // null for local files, which cannot be shared
 btnCancel.onclick = () => loadCtl?.abort();
 
 async function load(source: { url: string } | { files: File[] }) {
@@ -375,6 +394,8 @@ async function load(source: { url: string } | { files: File[] }) {
     } finally {
       loadMs = stop();
     }
+    loadedUrl = 'url' in source ? source.url : null;
+    updateUrl();
     const meta = wllama.getModelMetadata();
     const info = wllama.getLoadedContextInfo();
     const arch = meta.meta['general.architecture'] ?? '?';
@@ -392,8 +413,16 @@ async function load(source: { url: string } | { files: File[] }) {
   }
 }
 
-async function run() {
-  if (busy) return;
+/** model and prompt in the page URL, so the address bar is always a shareable link */
+function updateUrl() {
+  const q = new URLSearchParams();
+  if (loadedUrl) q.set('model', loadedUrl.startsWith(location.origin) ? loadedUrl.slice(location.origin.length) : loadedUrl);
+  if (promptEl.value) q.set('prompt', promptEl.value);
+  history.replaceState(null, '', `${location.pathname}?${q}`);
+}
+
+async function run(): Promise<boolean> {
+  if (busy) return false;
   setBusy(true);
   const stop = ticker(runStatus, () => 'Running');
   try {
@@ -410,14 +439,94 @@ async function run() {
     emptyEl.hidden = true;
     runStatus.textContent = 'Ctrl+Enter runs the lens again.';
     renderTimings(res, ms);
+    updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
     render(true);
+    return true;
   } catch (e) {
     runStatus.textContent = `Error: ${(e as Error).message}`;
+    return false;
   } finally {
     setBusy(false);
   }
 }
+
+/** append the final layer's top prediction at the last position and run again, n times */
+async function continueRun(n: number) {
+  for (let i = 0; i < n && res; i++) {
+    const id = res.topIds[((res.nLayers - 1) * res.nTokens + res.nTokens - 1) * res.k];
+    if (wllama.isTokenEOG(id)) {
+      runStatus.textContent = 'The model predicts the end of the text here.';
+      return;
+    }
+    promptEl.value += res.pieces.get(id) ?? '';
+    if (!(await run())) return;
+  }
+}
+
+/////////////////////////////////////////////
+// share and export
+
+function download(blob: Blob, name: string) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+const fileStem = () => `logitlens-${promptEl.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-|-$/g, '') || 'result'}`;
+
+function flash(btn: HTMLButtonElement, text: string) {
+  const old = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => (btn.textContent = old), 1500);
+}
+
+btnCopyLink.onclick = async () => {
+  updateUrl();
+  try {
+    await navigator.clipboard.writeText(location.href);
+    flash(btnCopyLink, loadedUrl ? 'Link copied' : 'Copied (prompt only)');
+  } catch {
+    runStatus.textContent = `Copy this link: ${location.href}`;
+  }
+};
+
+btnExportJson.onclick = () => {
+  if (!res) return;
+  const r = res;
+  const piece = (id: number) => r.pieces.get(id) ?? '';
+  const layers = [];
+  for (let l = 0; l < r.nLayers; l++) {
+    const cells = [];
+    for (let t = 0; t < r.nTokens; t++) {
+      const c = l * r.nTokens + t;
+      const top = [];
+      for (let j = 0; j < r.k; j++) top.push({ token: piece(r.topIds[c * r.k + j]), id: r.topIds[c * r.k + j], prob: r.topProbs[c * r.k + j] });
+      cells.push({ top, entropy: r.entropy[c], target: { token: piece(r.targetIds[c]), id: r.targetIds[c], prob: r.targetProbs[c], rank: r.targetRanks[c] } });
+    }
+    layers.push({ layer: layerLabel(l), cells });
+  }
+  const data = {
+    model: loadedUrl ?? 'local file',
+    prompt: promptEl.value,
+    tokens: r.tokens.map((id) => ({ token: piece(id), id })),
+    note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1)',
+    layers,
+  };
+  download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
+};
+
+btnExportPng.onclick = () => {
+  if (!res) return;
+  // draw without the selection outline, then restore the on-screen state
+  heatmap.draw({ mode: colorMode(), selected: null });
+  canvas.toBlob((blob) => {
+    if (blob) download(blob, `${fileStem()}.png`);
+    render();
+  }, 'image/png');
+};
 
 function render(animate = false) {
   if (!res) return;
@@ -596,7 +705,9 @@ btnClearCache.onclick = async () => {
 fileInput.onchange = () => {
   if (fileInput.files?.length) load({ files: Array.from(fileInput.files) });
 };
-btnRun.onclick = run;
+btnRun.onclick = () => run();
+btnContinue.onclick = () => continueRun(1);
+btnContinue5.onclick = () => continueRun(5);
 promptEl.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) run();
 });
@@ -631,6 +742,9 @@ if (!wllama.isSupportWebGPU()) {
   useGpu.disabled = true;
   modelStatus.textContent = 'WebGPU is not available in this browser, the lens will run on the CPU.';
 }
+const promptParam = urlParams.get('prompt');
+if (promptParam !== null) promptEl.value = promptParam;
+
 refreshCache().then(async () => {
   await search('');
   // preselect so a first visit is one click; the default's file list ships with the app
