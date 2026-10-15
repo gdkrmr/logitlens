@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logit Lens</title>
+    <meta name="description" content="See what each layer of a GGUF language model would predict. Runs in the browser with WebGPU." />
+    <script>
+      // apply the saved theme before first paint
+      try {
+        const t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail" aria-labelledby="model-h">
+        <header class="brand">
+          <p class="wordmark">logit lens</p>
+          <p class="tagline">Decode every layer of a language model through its own output head, and watch the next-token prediction form.</p>
+        </header>
+
+        <section class="block">
+          <h2 id="model-h" class="label">Model</h2>
+          <label class="sr-only" for="model-search">Search Hugging Face GGUF models</label>
+          <input id="model-search" type="search" placeholder="Search models, or owner/repo" autocomplete="off" spellcheck="false" />
+          <p id="repo-meta" class="hint" role="status"></p>
+          <div id="repo-list" class="repo-list" aria-label="Models"></div>
+
+          <div id="quant-block" class="quant-block" hidden>
+            <h3 class="label" id="quant-h">Quantization <span id="quant-repo" class="label-note"></span></h3>
+            <div id="quant-list" class="quant-list" role="radiogroup" aria-labelledby="quant-h"></div>
+            <p class="hint">Higher precision (Q8_0, F16) keeps early-layer readouts cleaner on small models.</p>
+          </div>
+
+          <div class="load-row">
+            <button id="btn-load" type="button" class="btn" disabled>Load model</button>
+            <label class="btn btn-quiet file-btn">
+              <input id="file-input" type="file" accept=".gguf" multiple />
+              <span>Open .gguf file</span>
+            </label>
+          </div>
+          <label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU</label>
+          <progress id="progress" max="1" value="0" hidden></progress>
+          <p id="model-status" class="status" role="status">No model loaded.</p>
+        </section>
+
+        <footer class="rail-foot">
+          <span class="label" id="theme-h">Theme</span>
+          <div class="seg" role="radiogroup" aria-labelledby="theme-h">
+            <label><input type="radio" name="theme" value="auto" checked /> Auto</label>
+            <label><input type="radio" name="theme" value="light" /> Light</label>
+            <label><input type="radio" name="theme" value="dark" /> Dark</label>
+          </div>
+        </footer>
+      </aside>
+
+      <main class="stage">
+        <section class="block prompt-block" aria-labelledby="prompt-h">
+          <h2 id="prompt-h" class="label">Prompt</h2>
+          <div class="prompt-row">
+            <textarea id="prompt" rows="2" spellcheck="false">The Eiffel Tower is located in the city of</textarea>
+            <button id="btn-run" type="button" class="btn" disabled>Run lens</button>
+          </div>
+          <p id="run-status" class="hint" role="status">Ctrl+Enter runs the lens.</p>
+          <dl id="timings" class="timings" hidden></dl>
+        </section>
+
+        <section id="empty" class="empty">
+          <p class="empty-title">Load a model to start.</p>
+          <p>Each column is one token of your prompt. Rows are the model's layers, from the token embeddings at the bottom to the final layer at the top. Each cell shows the token that layer would predict next, shaded by how confident it is.</p>
+        </section>
+
+        <section id="result" class="block readout" hidden aria-labelledby="result-h">
+          <div class="readout-head">
+            <h2 id="result-h" class="label">Readout</h2>
+            <div class="controls">
+              <div class="seg" role="radiogroup" aria-label="Shade cells by">
+                <label><input type="radio" name="color" value="prob" checked /> Probability</label>
+                <label><input type="radio" name="color" value="entropy" /> Entropy</label>
+              </div>
+              <div class="seg" role="radiogroup" aria-label="View">
+                <label><input type="radio" name="view" value="heatmap" checked /> Heatmap</label>
+                <label><input type="radio" name="view" value="table" /> Table</label>
+              </div>
+            </div>
+          </div>
+          <div id="legend" class="legend"></div>
+          <div id="heatmap-wrap" class="scroll-x">
+            <canvas id="heatmap" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
+          </div>
+          <div id="table-wrap" class="scroll-x" hidden></div>
+          <p class="hint">Hover a cell for its top 5 tokens. Click a cell to trace a token through the layers.</p>
+        </section>
+
+        <section class="block" id="trace" hidden aria-labelledby="trace-h">
+          <h2 id="trace-h" class="label">Trace</h2>
+          <p id="trace-desc" class="trace-desc"></p>
+          <div id="trace-chips" class="chips" role="group" aria-label="Token to trace"></div>
+          <div id="trace-plot"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

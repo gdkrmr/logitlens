@@ -1,0 +1,5 @@
+native/build/
+web/node_modules/
+web/dist/
+web/public/wasm/
+.DS_Store

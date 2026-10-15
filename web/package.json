@@ -1,0 +1,19 @@
+{
+  "name": "logitlens",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "mkdir -p public/wasm && cp ../third_party/wllama/src/wasm/wllama.wasm public/wasm/",
+    "dev": "npm run wasm && vite",
+    "build": "npm run wasm && tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+    "@fontsource-variable/martian-mono": "^5.3.0"
+  }
+}
