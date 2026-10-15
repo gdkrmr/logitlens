@@ -16,7 +16,7 @@ Ideas for the logit lens visualizer, roughly ordered by value for effort within 
 - [ ] **Track one token everywhere.** Type a token and shade the whole grid by its probability or
       rank at every (layer, position). Same mechanism as the trace plot, applied to all columns.
 - [ ] **Show the model's continuation.** Append the predicted token and rerun, a few steps at a
-      time, so the lens covers text the model generates itself (PLAN.md Phase 5).
+      time, so the lens covers text the model generates itself.
 
 ## Visualizing MTP (multi-token prediction)
 
@@ -48,9 +48,9 @@ uses it as a built-in draft model for speculative decoding.
 - [ ] **Chat template toggle.** Instruct models behave differently inside their chat format. One
       checkbox that wraps the prompt in the model's template (wllama already parses it).
 - [ ] **Shareable link and export.** Encode model URL, quantization and prompt in the page URL.
-      Export results as JSON and the heatmap as PNG (PLAN.md Phase 5).
+      Export results as JSON and the heatmap as PNG.
 - [ ] **Side-by-side prompts.** Two aligned heatmaps for minimal pairs, e.g. "The doctor said
-      she" vs "The doctor said he" (PLAN.md Phase 5).
+      she" vs "The doctor said he".
 
 ## Model coverage and limits
 
@@ -58,12 +58,14 @@ uses it as a built-in draft model for speculative decoding.
       currently refuses them. Needs embedding scaling (sqrt(n_embd)) and final-logit soft-capping
       in the projection graph in `cpp/wllama-lens.h`, then add the arch to the allowlist (C++ and
       `web/src/hf.ts`).
+- [ ] **Phi support.** Phi models use LayerNorm with bias as the final norm, so the projection
+      graph needs `ggml_norm` + weight + bias instead of `ggml_rms_norm` for them.
 - [ ] **Longer prompts.** The 64-token cap exists because llama.cpp computes full logits for every
       position (~1 MB per token for a 248k vocab). Stopping the graph right after the last
       `l_out-*` in `cb_eval` (return false) would skip the LM head compute; also avoid the
       oversized logits buffer, then raise `maxTokens`.
 - [ ] **Tuned lens.** Load per-layer `n_embd x n_embd` translators from a separate file and apply
-      them before the norm (PLAN.md Phase 5).
+      them before the norm.
 
 ## Housekeeping
 
@@ -72,4 +74,4 @@ uses it as a built-in draft model for speculative decoding.
       README.md.
 - [x] **Push the wllama fork.** The `logitlens` branch is on https://github.com/gdkrmr/wllama
       and the submodule points there.
-- [ ] **Benchmark WebGPU generation against the CPU build.** The one open PLAN.md Phase 0 item.
+- [ ] **Benchmark WebGPU generation against the CPU build.** Never measured.

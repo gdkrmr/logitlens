@@ -1,12 +1,18 @@
 # Logit lens
 
-A browser-based logit lens for GGUF models, built on a fork of wllama (llama.cpp in wasm with WebGPU). See `PLAN.md` for the design and status.
+A browser-based logit lens for GGUF models, built on a fork of wllama (llama.cpp in wasm with WebGPU). Feature ideas and open items are in `TODO.md`.
 
 ## Layout
 
 - `third_party/wllama/` - wllama fork. Lens code: `cpp/wllama-lens.h` (capture via `cb_eval` plus the projection graph), the `logit_lens` action in `cpp/wllama-context.h`, `wllama.logitLens()` in `src/wllama.ts`.
 - `native/` - `lens-cli`, a native build of the same lens code (CPU or Vulkan).
 - `web/` - the visualizer (Vite, TypeScript, no framework).
+
+## How it works
+
+1. **Capture.** The lens runs the prompt in its own `llama_context`, separate from the one wllama uses for generation, with an eval callback (`cb_eval`). The callback copies each layer's residual-stream output (`l_out-<il>`) back from the GPU while the forward pass runs. Synchronous WebGPU readback inside the callback works in Chrome with the JSPI build. In current llama.cpp, `inp_embd` names an unused placeholder; the real token embedding is the first `GET_ROWS` on `token_embd.weight`, so the callback matches that op.
+2. **Project.** The captured rows go through the model's `output_norm` and output matrix (`tok_embd` when embeddings are tied) in a second ggml graph on the GPU, chunked to 32 MB of logits at a time. Softmax, top-k, entropy and the rank of a target token are computed there.
+3. **Return.** Only those small per-cell results go back to JavaScript, as packed typed arrays, and the web app draws the layer x position heatmap.
 
 ## Run the web app
 
@@ -47,6 +53,25 @@ It prints the top-1 token per layer and position. As a sanity check it also repo
 
 - Architectures: llama, qwen2, qwen3, qwen35.
 - Lens prompts are capped at 64 tokens by default, since llama.cpp computes full logits for every position.
+- The whole model must fit in browser memory, even with GPU offload, and the wasm heap is capped at 4 GB. The model picker disables files over 3.5 GB.
+- Browsers: Chrome and Edge on desktop. The Firefox/Safari compat build is skipped (`SKIP_COMPAT=1`).
+
+## Deploy
+
+`web/dist/` is a static site with no backend. The host must provide:
+
+- **HTTPS (or localhost).** WebGPU needs a secure context, and `file://` won't load the wasm or the worker.
+- **Cross-origin isolation headers**, for the multi-threaded build (`SharedArrayBuffer`):
+
+  ```
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  ```
+
+  Without them the app still works but falls back to a single thread. If they block cross-origin resources, `Cross-Origin-Embedder-Policy: credentialless` is the usual fix.
+- **`.wasm` served as `application/wasm`**, which common static hosts do by default.
+
+Cloudflare Pages and Netlify read the `_headers` file in `dist/` as-is. GitHub Pages can't set headers; use `coi-serviceworker` there. Any web server where these two headers can be added works too. The Vite dev and preview servers already send them.
 
 ## License
 
