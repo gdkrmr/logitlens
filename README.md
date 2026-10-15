@@ -52,7 +52,7 @@ It prints the top-1 token per layer and position. As a sanity check it also repo
 ## Limits
 
 - Architectures: llama, qwen2, qwen3, qwen35.
-- Lens prompts are capped at 64 tokens by default, since llama.cpp computes full logits for every position.
+- Lens prompts are capped at 256 tokens by default. The prompt is decoded in batches of 64 tokens and the output head is skipped, so the hidden states (layers x tokens x n_embd floats) and the projection time grow with the prompt, not the logits buffers.
 - The whole model must fit in browser memory, even with GPU offload, and the wasm heap is capped at 4 GB. The model picker disables files over 3.5 GB.
 - Browsers: Chrome and Edge on desktop. The Firefox/Safari compat build is skipped (`SKIP_COMPAT=1`).
 
