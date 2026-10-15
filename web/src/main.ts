@@ -803,9 +803,10 @@ async function retarget(pos: number, id: number) {
   try {
     const targets = Array.from(res.targetIds.slice(0, res.nTokens));
     targets[pos] = id;
-    const pieces = res.pieces;
+    const { pieces, kl } = res;
     const t0 = performance.now();
     res = await wllama.logitLens({ prompt: '', reuse: true, k: res.k, targetIds: targets });
+    res.kl = kl; // reuse with targets skips KL, it does not depend on them
     renderTimings(res, performance.now() - t0);
     for (const [k, v] of pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
     heatmap.setResult(res);
