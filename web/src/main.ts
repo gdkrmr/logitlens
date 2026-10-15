@@ -25,6 +25,9 @@ const directHf = directUrl ? /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolv
 const DIRECT_ID = '(direct URL)';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const modelCurrent = $<HTMLParagraphElement>('model-current');
+const railLoad = $<HTMLDivElement>('rail-load');
+const modelOptions = $<HTMLDetailsElement>('model-options');
 const btnContinue = $<HTMLButtonElement>('btn-continue');
 const btnContinue5 = $<HTMLButtonElement>('btn-continue5');
 const btnCopyLink = $<HTMLButtonElement>('btn-copy-link');
@@ -121,6 +124,9 @@ function syncLoad() {
     else if (needsConfirm()) note += size ? ' Files this large ask for a second click.' : ' Downloads of unknown size ask for a second click.';
   }
   downloadNotes.forEach((el) => (el.textContent = note));
+  modelCurrent.textContent = selectedLabel;
+  // the empty state has the same button and note; show the rail copy only once that is gone
+  railLoad.hidden = !emptyEl.hidden && !btnLoadEmpty.hidden;
   emptyTitle.textContent = loaded ? 'Model loaded. Run the lens to see the readout.' : 'Load a model to start.';
 }
 
@@ -742,6 +748,20 @@ if (!wllama.isSupportWebGPU()) {
   useGpu.disabled = true;
   modelStatus.textContent = 'WebGPU is not available in this browser, the lens will run on the CPU.';
 }
+// the options disclosure remembers its state per browser
+try {
+  modelOptions.open = localStorage.getItem('modelOptions') === 'open';
+} catch {
+  // storage unavailable, start closed
+}
+modelOptions.addEventListener('toggle', () => {
+  try {
+    localStorage.setItem('modelOptions', modelOptions.open ? 'open' : 'closed');
+  } catch {
+    // storage unavailable, the state lasts for this page only
+  }
+});
+
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
 

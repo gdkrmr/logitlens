@@ -797,3 +797,61 @@ progress {
     grid-template-columns: auto 1fr;
   }
 }
+
+/* model summary and the collapsible options */
+.model-current {
+  font: 500 13.5px/1.4 var(--mono);
+  font-stretch: 87.5%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.model-current:empty {
+  display: none;
+}
+.model-current + .load-row {
+  margin-top: 10px;
+}
+.options {
+  margin-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.options summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+  cursor: pointer;
+  list-style: none;
+  font: 600 11px/1 var(--mono);
+  font-stretch: 87.5%;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.options summary::-webkit-details-marker {
+  display: none;
+}
+.options summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+.options[open] summary::before {
+  transform: rotate(45deg);
+}
+.options summary:hover {
+  color: var(--ink);
+}
+.options-body {
+  display: grid;
+  gap: 0;
+  padding-top: 8px;
+}
+.options-body .file-btn {
+  justify-self: start;
+  margin-top: 16px;
+}

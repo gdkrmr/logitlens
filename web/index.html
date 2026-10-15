@@ -25,31 +25,40 @@
 
         <section class="block">
           <h2 id="model-h" class="label">Model</h2>
-          <label class="sr-only" for="model-search">Search Hugging Face GGUF models</label>
-          <input id="model-search" type="search" placeholder="Search models, or owner/repo" autocomplete="off" spellcheck="false" />
-          <p id="repo-meta" class="hint" role="status"></p>
-          <div id="repo-list" class="repo-list" aria-label="Models"></div>
-
-          <div id="quant-block" class="quant-block" hidden>
-            <h3 class="label" id="quant-h">Quantization <span id="quant-repo" class="label-note"></span></h3>
-            <div id="quant-list" class="quant-list" role="radiogroup" aria-labelledby="quant-h"></div>
-            <p class="hint">Higher precision (Q8_0, F16) keeps early-layer readouts cleaner on small models.</p>
+          <p id="model-current" class="model-current"></p>
+          <div id="rail-load" class="rail-load">
+            <div class="load-row">
+              <button id="btn-load" type="button" class="btn" disabled>Load model</button>
+            </div>
+            <p class="hint download-note" data-download-note></p>
           </div>
-
-          <div class="load-row">
-            <button id="btn-load" type="button" class="btn" disabled>Load model</button>
-            <label class="btn btn-quiet file-btn">
-              <input id="file-input" type="file" accept=".gguf" multiple />
-              <span>Open .gguf file</span>
-            </label>
-          </div>
-          <p class="hint download-note" data-download-note></p>
-          <label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU</label>
           <p id="model-status" class="status" role="status">No model loaded.</p>
-          <div id="cache-row" class="cache-row" hidden>
-            <span id="cache-info"></span>
-            <button id="btn-clear-cache" type="button" class="link-btn">Delete cached models</button>
-          </div>
+
+          <details id="model-options" class="options">
+            <summary>Model and settings</summary>
+            <div class="options-body">
+              <label class="sr-only" for="model-search">Search Hugging Face GGUF models</label>
+              <input id="model-search" type="search" placeholder="Search models, or owner/repo" autocomplete="off" spellcheck="false" />
+              <p id="repo-meta" class="hint" role="status"></p>
+              <div id="repo-list" class="repo-list" aria-label="Models"></div>
+
+              <div id="quant-block" class="quant-block" hidden>
+                <h3 class="label" id="quant-h">Quantization <span id="quant-repo" class="label-note"></span></h3>
+                <div id="quant-list" class="quant-list" role="radiogroup" aria-labelledby="quant-h"></div>
+                <p class="hint">Higher precision (Q8_0, F16) keeps early-layer readouts cleaner on small models.</p>
+              </div>
+
+              <label class="btn btn-quiet file-btn">
+                <input id="file-input" type="file" accept=".gguf" multiple />
+                <span>Open .gguf file</span>
+              </label>
+              <label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU</label>
+              <div id="cache-row" class="cache-row" hidden>
+                <span id="cache-info"></span>
+                <button id="btn-clear-cache" type="button" class="link-btn">Delete cached models</button>
+              </div>
+            </div>
+          </details>
         </section>
 
         <footer class="rail-foot">
