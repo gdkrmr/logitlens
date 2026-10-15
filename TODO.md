@@ -67,15 +67,9 @@ uses it as a built-in draft model for speculative decoding.
 
 ## Housekeeping
 
-- [ ] **Publish on GitHub.** The empty repo is https://github.com/gdkrmr/logitlens. Push `main`
-      (`git remote add origin https://github.com/gdkrmr/logitlens.git && git push -u origin main`),
-      then link to it from the app (rail footer next to the license links) and from README.md.
-      Do this after the wllama fork below, so the submodule resolves for anyone who clones.
-- [ ] **Push the wllama fork.** Still needed: `third_party/wllama` is a submodule pinned to commit
-      `1ebd23f` on the local branch `logitlens`, but `.gitmodules` points at upstream
-      `ngxson/wllama`, which does not have that commit, so a fresh clone fails to check it out.
-      Fork ngxson/wllama to `gdkrmr/wllama` on GitHub, then:
-      `git -C third_party/wllama remote add fork https://github.com/gdkrmr/wllama.git`,
-      `git -C third_party/wllama push fork logitlens`,
-      `git submodule set-url third_party/wllama https://github.com/gdkrmr/wllama.git`, and commit.
+- [x] **Publish on GitHub.** Pushed to https://github.com/gdkrmr/logitlens.
+- [ ] **Link the GitHub repo** from the app (rail footer next to the license links) and from
+      README.md.
+- [x] **Push the wllama fork.** The `logitlens` branch is on https://github.com/gdkrmr/wllama
+      and the submodule points there.
 - [ ] **Benchmark WebGPU generation against the CPU build.** The one open PLAN.md Phase 0 item.

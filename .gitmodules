@@ -1,4 +1,4 @@
 [submodule "third_party/wllama"]
 	path = third_party/wllama
-	url = https://github.com/ngxson/wllama.git
+	url = https://github.com/gdkrmr/wllama.git
 	branch = logitlens
