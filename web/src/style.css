@@ -1037,3 +1037,41 @@ progress {
     border-top: 1px solid var(--rule);
   }
 }
+
+/* timings: full strip on desktop, one expandable line on phones */
+.run-status:empty {
+  display: none;
+}
+.timings-box > summary {
+  cursor: pointer;
+  font: 500 13px/1.4 var(--mono);
+  font-stretch: 87.5%;
+  color: var(--ink-2);
+  width: fit-content;
+  margin-top: 8px;
+}
+@media (min-width: 861px) {
+  .timings-box > summary {
+    display: none;
+  }
+}
+
+/* points at the load button when someone tries to run without a model */
+@keyframes attention {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--trace);
+  }
+}
+.btn.attention {
+  animation: attention 0.6s ease-in-out 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.attention {
+    outline: 3px solid var(--trace);
+    outline-offset: 2px;
+  }
+}

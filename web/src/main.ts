@@ -55,6 +55,10 @@ const quantList = $<HTMLDivElement>('quant-list');
 const quantRepo = $<HTMLSpanElement>('quant-repo');
 const emptyEl = $<HTMLElement>('empty');
 const timingsEl = $<HTMLElement>('timings');
+const timingsBox = $<HTMLDetailsElement>('timings-box');
+const timingsSummary = $<HTMLElement>('timings-summary');
+// keyboard shortcut hint only where there is likely a keyboard
+const idleHint = window.matchMedia('(hover: hover)').matches ? 'Ctrl+Enter runs the lens.' : '';
 const btnLoad = $<HTMLButtonElement>('btn-load');
 const btnLoadEmpty = $<HTMLButtonElement>('btn-load-empty');
 const emptyTitle = $<HTMLParagraphElement>('empty-title');
@@ -293,7 +297,8 @@ function setBusy(b: boolean) {
   btnClearCache.disabled = b;
   syncLoad();
   fileInput.disabled = b;
-  btnRun.disabled = b || !wllama.isModelLoaded();
+  // stays clickable without a model, so a click can explain what to do
+  btnRun.disabled = b;
   btnContinue.disabled = btnContinue5.disabled = b || !res || !wllama.isModelLoaded();
 }
 
@@ -323,10 +328,11 @@ function renderTimings(r: LogitLensResult, totalMs: number) {
   items.push(['Projection', fmtMs(r.tProjectMs)]);
   items.push(['Other', fmtMs(other)]);
   items.push(['Lens total', fmtMs(totalMs), 'total']);
+  timingsSummary.textContent = `Lens ${fmtMs(totalMs)} \u00b7 ${r.nTokens} tokens \u00d7 ${r.nLayers} layers`;
   timingsEl.innerHTML =
     items.map(([k, v, cls]) => `<div${cls ? ` class="${cls}"` : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('') +
     `<div class="note">${r.nTokens} tokens \u00d7 ${r.nLayers} layers on ${esc(r.backend.replace(/^(\w+): \1$/, '$1'))}</div>`;
-  timingsEl.hidden = false;
+  timingsBox.hidden = false;
 }
 
 /** keep the repo list and chips in step with the cache, without changing the selection */
@@ -460,8 +466,24 @@ function scrollToNewest() {
   );
 }
 
+/** explain that a model is needed and point at the load button that is on screen */
+function needModel() {
+  runStatus.textContent = 'No model is loaded yet. Load one first with the highlighted button, then run the lens.';
+  const target = !btnLoadEmpty.hidden && !emptyEl.hidden ? btnLoadEmpty : btnLoad;
+  const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  target.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' });
+  target.classList.remove('attention');
+  void target.offsetWidth; // restart the animation
+  target.classList.add('attention');
+  target.focus({ preventScroll: true });
+}
+
 async function run(continuing = false): Promise<boolean> {
   if (busy) return false;
+  if (!wllama.isModelLoaded()) {
+    needModel();
+    return false;
+  }
   const prevTokens = res?.tokens ?? [];
   setBusy(true);
   const stop = ticker(runStatus, () => 'Running');
@@ -477,7 +499,7 @@ async function run(continuing = false): Promise<boolean> {
     traceEl.hidden = true;
     resultEl.hidden = false;
     emptyEl.hidden = true;
-    runStatus.textContent = 'Ctrl+Enter runs the lens again.';
+    runStatus.textContent = idleHint && 'Ctrl+Enter runs the lens again.';
     renderTimings(res, ms);
     updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
@@ -490,7 +512,8 @@ async function run(continuing = false): Promise<boolean> {
     else heatmapWrap.scrollLeft = tableWrap.scrollLeft = 0;
     return true;
   } catch (e) {
-    runStatus.textContent = `Error: ${(e as Error).message}`;
+    if (/loadModel\(\) is not yet called/.test((e as Error).message)) needModel();
+    else runStatus.textContent = `Error: ${(e as Error).message}`;
     return false;
   } finally {
     setBusy(false);
@@ -965,6 +988,10 @@ if (previewBranch) {
   badge.hidden = false;
   document.title = `[${previewBranch}] ${document.title}`;
 }
+
+runStatus.textContent = idleHint;
+// desktop shows the full timing strip; phones start with the one-line summary
+timingsBox.open = window.matchMedia('(min-width: 861px)').matches;
 
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
