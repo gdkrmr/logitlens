@@ -85,6 +85,11 @@
               </div>
             </div>
           </div>
+          <div class="examples" role="group" aria-labelledby="examples-label">
+            <span id="examples-label" class="examples-label">Try</span>
+            <div id="examples" class="examples-list"></div>
+          </div>
+          <p id="example-note" class="hint example-note"></p>
           <p id="run-status" class="hint" role="status">Ctrl+Enter runs the lens.</p>
           <dl id="timings" class="timings" hidden></dl>
         </section>
@@ -125,6 +130,17 @@
               </div>
             </div>
           </div>
+          <p id="summary" class="summary"></p>
+          <details class="howto">
+            <summary>How to read this</summary>
+            <ul>
+              <li>Each <strong>column</strong> is one piece of your prompt. The model reads text in pieces called tokens, so long words are split, for example "Eiffel" into "Eiff" and "el".</li>
+              <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
+              <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. Darker means more confident.</li>
+              <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
+              <li><strong>Hover</strong> a cell for its top 5 guesses. <strong>Click</strong> a cell to follow one word through all layers.</li>
+            </ul>
+          </details>
           <div id="legend" class="legend"></div>
           <div id="heatmap-wrap" class="scroll-x">
             <div class="heatmap-row">

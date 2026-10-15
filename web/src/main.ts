@@ -25,6 +25,17 @@ const directHf = directUrl ? /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolv
 const DIRECT_ID = '(direct URL)';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const examplesEl = $<HTMLDivElement>('examples');
+const exampleNote = $<HTMLParagraphElement>('example-note');
+const summaryEl = $<HTMLParagraphElement>('summary');
+
+// each one shows something at a glance in small models; the note says what to look for
+const EXAMPLES = [
+  { label: 'A fact', prompt: 'The Eiffel Tower is located in the city of', note: 'Look at the last column: in which layer does "Paris" first show up, and where does the model settle on it?' },
+  { label: 'Counting', prompt: 'One, two, three, four,', note: 'An easy pattern: the model is sure of "five" long before the last layer.' },
+  { label: 'Who did what', prompt: 'Mary and John went to the store. John gave a drink to', note: 'The model has to keep track of who is who. Watch how late in the layers "Mary" appears.' },
+  { label: 'Opposites', prompt: 'The opposite of hot is', note: '"cold" shows up in the middle layers, but the model keeps hesitating before it commits.' },
+];
 const modelCurrent = $<HTMLParagraphElement>('model-current');
 const railLoad = $<HTMLDivElement>('rail-load');
 const modelOptions = $<HTMLDetailsElement>('model-options');
@@ -550,8 +561,37 @@ btnExportPng.onclick = () => {
   }, 'image/png');
 };
 
+/** one plain-language sentence about the last position: final guess, confidence, where it settles */
+function renderSummary() {
+  const r = res!;
+  const t = r.nTokens - 1;
+  const top = (l: number) => r.topIds[(l * r.nTokens + t) * r.k];
+  const word = (id: number) => `\u201c<span class="tok">${esc(showPiece(r.pieces.get(id)).trim() || showPiece(r.pieces.get(id)))}</span>\u201d`;
+  const fin = top(r.nLayers - 1);
+  const prob = r.topProbs[((r.nLayers - 1) * r.nTokens + t) * r.k];
+  const after = `After ${word(r.tokens[t])}`;
+  if (wllama.isTokenEOG(fin)) {
+    summaryEl.innerHTML = `${after}, the model would most likely end the text here (${pct(prob)}).`;
+    return;
+  }
+  let text = `${after}, the model's final guess is ${word(fin)} (${pct(prob)}).`;
+  // from the top predictions, not the emergence line, which follows the traced token
+  let settle = r.nLayers - 1;
+  while (settle > 0 && top(settle - 1) === fin) settle--;
+  let first = 0;
+  while (first < r.nLayers && top(first) !== fin) first++;
+  const name = (l: number) => (l === 0 ? 'the input row' : `layer ${layerLabel(l)}`);
+  if (settle === r.nLayers - 1)
+    text += first < settle ? ` It first shows up at ${name(first)}, but only the last layer commits to it.` : ' Only the last layer arrives at it; the layers below predict other words.';
+  else if (settle === 0) text += ' Even the input row already points to it.';
+  else text += ` It settles on this answer from ${name(settle)} upward${first < settle ? `, after first showing up at ${name(first)}` : ''}.`;
+  if (prob < 0.2) text += ' The model is unsure, though: other words are almost as likely.';
+  summaryEl.innerHTML = text;
+}
+
 function render(animate = false, fromCol = 0) {
   if (!res) return;
+  renderSummary();
   const mode = colorMode();
   const scale =
     mode === 'prob'
@@ -776,6 +816,29 @@ modelOptions.addEventListener('toggle', () => {
   } catch {
     // storage unavailable, the state lasts for this page only
   }
+});
+
+examplesEl.replaceChildren(
+  ...EXAMPLES.map((ex) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = ex.label;
+    b.title = ex.prompt;
+    b.setAttribute('aria-pressed', 'false');
+    b.onclick = () => {
+      promptEl.value = ex.prompt;
+      examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      exampleNote.textContent = ex.note;
+      if (wllama.isModelLoaded()) run();
+      else exampleNote.textContent += ' Load a model, then run the lens.';
+    };
+    return b;
+  })
+);
+// editing the prompt by hand leaves the example
+promptEl.addEventListener('input', () => {
+  examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+  exampleNote.textContent = '';
 });
 
 const promptParam = urlParams.get('prompt');

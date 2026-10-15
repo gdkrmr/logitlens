@@ -874,3 +874,78 @@ progress {
   z-index: 1;
   background: var(--ground);
 }
+
+/* example prompts, summary, how-to */
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 10px;
+}
+.examples-label {
+  font: 600 11px/1 var(--mono);
+  font-stretch: 87.5%;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: 2px;
+}
+.examples-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.examples-list button {
+  font: 400 13px/1.2 var(--body);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.examples-list button:hover {
+  border-color: var(--ink-3);
+}
+.examples-list button[aria-pressed='true'] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.example-note:empty {
+  display: none;
+}
+.summary {
+  font-size: 16px;
+  line-height: 1.5;
+  max-width: 70ch;
+  margin: 0 0 10px;
+}
+.summary:empty {
+  display: none;
+}
+.summary .tok {
+  font-weight: 600;
+}
+.howto {
+  margin: 0 0 12px;
+  max-width: 70ch;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.howto summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-weight: 600;
+  width: fit-content;
+}
+.howto summary:hover {
+  color: var(--ink);
+}
+.howto ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.howto li + li {
+  margin-top: 4px;
+}
