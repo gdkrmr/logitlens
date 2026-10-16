@@ -513,8 +513,11 @@ function updateUrl() {
   if (promptEl.value) q.set('prompt', promptEl.value);
   if (useChat.checked) q.set('chat', '1');
   if (useChat.checked && reply) q.set('reply', reply);
-  if (!useMtp.checked) q.set('mtp', '0');
-  if (draftCount() !== DRAFT_DEFAULT) q.set('draft', String(draftCount()));
+  // MTP settings only mean something for models with the block; before a load, keep what the link asked for
+  if (modelHasMtp || !wllama.isModelLoaded()) {
+    if (!useMtp.checked) q.set('mtp', '0');
+    if (draftCount() !== DRAFT_DEFAULT) q.set('draft', String(draftCount()));
+  }
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
