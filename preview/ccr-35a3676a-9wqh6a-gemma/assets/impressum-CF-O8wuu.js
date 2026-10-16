@@ -1,0 +1,1 @@
+import"./style-CXt6Ek9I.js";document.querySelectorAll(`[data-obf]`).forEach(e=>{let t=atob(e.dataset.obf).split(``).reverse().join(``);e.textContent=t,e instanceof HTMLAnchorElement&&(e.href=`mailto:${t}`)});
