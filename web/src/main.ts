@@ -68,6 +68,9 @@ const btnLoadEmpty = $<HTMLButtonElement>('btn-load-empty');
 const emptyTitle = $<HTMLParagraphElement>('empty-title');
 const fileInput = $<HTMLInputElement>('file-input');
 const useGpu = $<HTMLInputElement>('use-gpu');
+const mtpSettings = $<HTMLDivElement>('mtp-settings');
+const useMtp = $<HTMLInputElement>('use-mtp');
+const mtpDraft = $<HTMLInputElement>('mtp-draft');
 const modelStatus = $<HTMLSpanElement>('model-status');
 const loadPanel = $<HTMLElement>('load-panel');
 const loadPhase = $<HTMLParagraphElement>('load-phase');
@@ -117,6 +120,13 @@ let chatFormat: ChatFormat | null = null;
 let reply = '';
 let lastInput = '';
 const chatOn = () => useChat.checked && !!chatFormat;
+
+// MTP (NextN) block: only Qwen3.5 GGUFs from the -MTP- repos have one; the lens runs it when the switch is on
+const DRAFT_DEFAULT = 3;
+const DRAFT_MAX = 8;
+let modelHasMtp = false;
+const mtpOn = () => modelHasMtp && useMtp.checked;
+const draftCount = () => Math.max(0, Math.min(DRAFT_MAX, Math.round(Number(mtpDraft.value) || 0)));
 /** the text the lens reads */
 const lensInput = () => (chatOn() ? chatFormat!.render(promptEl.value) + reply : promptEl.value);
 
@@ -478,6 +488,8 @@ async function load(source: { url: string } | { files: File[] }) {
     const meta = wllama.getModelMetadata();
     const info = wllama.getLoadedContextInfo();
     const arch = meta.meta['general.architecture'] ?? '?';
+    modelHasMtp = arch === 'qwen35' && Number(meta.meta[`${arch}.nextn_predict_layers`] ?? 0) > 0;
+    mtpSettings.hidden = !modelHasMtp;
     const name = meta.meta['general.name'] ?? ('url' in source ? source.url.split('/').pop() : source.files[0].name);
     modelIndicator.querySelector('a')!.textContent = `${name} \u00b7 loaded`;
     modelIndicator.hidden = false;
@@ -501,6 +513,11 @@ function updateUrl() {
   if (promptEl.value) q.set('prompt', promptEl.value);
   if (useChat.checked) q.set('chat', '1');
   if (useChat.checked && reply) q.set('reply', reply);
+  // MTP settings only mean something for models with the block; before a load, keep what the link asked for
+  if (modelHasMtp || !wllama.isModelLoaded()) {
+    if (!useMtp.checked) q.set('mtp', '0');
+    if (draftCount() !== DRAFT_DEFAULT) q.set('draft', String(draftCount()));
+  }
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
@@ -509,7 +526,10 @@ function scrollToNewest(smooth = true) {
   const behavior: ScrollBehavior = smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto';
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      for (const el of [heatmapWrap, tableWrap]) if (!el.hidden) el.scrollTo({ left: el.scrollWidth, behavior });
+      // with draft columns, keep the last prompt column in view
+      const draft = res && heatmap.draftCols ? LEFT + (res.nTokens - 1) * CELL_W : Infinity;
+      if (!heatmapWrap.hidden) heatmapWrap.scrollTo({ left: Math.min(heatmapWrap.scrollWidth, draft), behavior });
+      if (!tableWrap.hidden) tableWrap.scrollTo({ left: tableWrap.scrollWidth, behavior });
     })
   );
 }
@@ -540,8 +560,8 @@ async function run(continuing = false): Promise<boolean> {
     try {
       lastInput = lensInput();
       // continuing: the lens runs only the new tokens if the old ones are unchanged
-      // mtp: models with an MTP (NextN) block get the MTP row; nMtp is 0 for all others
-      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing, mtp: true });
+      // mtp: models with an MTP (NextN) block get the MTP row and the draft columns; nMtp is 0 for all others
+      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing, mtp: mtpOn(), mtpDraft: mtpOn() ? draftCount() : 0 });
     } finally {
       ms = stop();
     }
@@ -641,7 +661,9 @@ btnExportJson.onclick = () => {
     tokens: r.tokens.map((id) => ({ token: piece(id), id })),
     note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1); entropy and kl in nats, kl = KL(final layer || this layer) at the same position',
     layers,
+    ...(modelHasMtp && { settings: { mtp: useMtp.checked, draftTokens: draftCount() } }),
     ...(r.nMtp > 0 && { mtp: exportMtp(r, piece) }),
+    ...(r.nMtp > 0 && r.nDraft > 0 && { draft: exportDraft(r, piece) }),
   };
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
 };
@@ -667,6 +689,26 @@ function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
   }
   return {
     note: 'MTP (NextN) block, teacher-forced: cells[t] reads the final hidden state at token t and the embedding of token t+1, and guesses token t+2; the last cell is null (no token t+1 in the prompt); the heatmap draws cells[t] in column t+1, next to the layers that guess the same token; entropy in nats',
+    stages,
+  };
+}
+
+/** drafted tokens past the prompt, per MTP stage; the heatmap shows the last stage */
+function exportDraft(r: LogitLensResult, piece: (id: number) => string) {
+  const stages = [];
+  for (let s = 0; s < r.nMtp; s++) {
+    const cells = [];
+    for (let j = 0; j < r.nDraft; j++) {
+      const c = s * r.nDraft + j;
+      const top = [];
+      for (let i = 0; i < r.k; i++) top.push({ token: piece(r.draftTopIds[c * r.k + i]), id: r.draftTopIds[c * r.k + i], prob: r.draftTopProbs[c * r.k + i] });
+      cells.push({ input: { token: piece(r.draftTokens[j]), id: r.draftTokens[j] }, top, entropy: r.draftEntropy[c] });
+    }
+    stages.push({ stage: MTP_STAGES[s] ?? String(s), cells });
+  }
+  return {
+    note: "chained MTP draft past the prompt, as in llama.cpp's MTP speculative decoding: step 0 reads the final hidden state at the last prompt token and tokens[0], the final layer's prediction there; step j > 0 reads the block's own output (after its head norm) from step j-1 and tokens[j], its top guess; tokens[j+1] is the top guess of step j",
+    tokens: Array.from(r.draftTokens, (id) => ({ token: piece(id), id })),
     stages,
   };
 }
@@ -761,6 +803,7 @@ function renderSummary() {
   const mc = heatmap.mtpRows ? heatmap.mtpCell(t) : -1;
   const m = mc >= 0 ? r.mtpTopIds[mc * r.k] : -1;
   if (m >= 0) text += ` The MTP row, which guessed this token one position earlier, ${m === fin ? 'already had this word' : `had ${word(m)}`}.`;
+  if (heatmap.draftCols) text += ` Drafting ahead from ${word(fin)}, the MTP block proposes ${Array.from(r.draftTokens.slice(1), word).join(' ')}.`;
   summaryEl.innerHTML = text;
 }
 
@@ -786,7 +829,9 @@ function render(animate = false, fromCol = 0) {
   if (heatmap.mtpRows) {
     const shaded = mode === 'prob' || mode === 'entropy';
     legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top row, MTP: the same next token, guessed one position earlier${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`} ${info('mtp')}</span></span>`;
+    if (heatmap.draftCols) legend.innerHTML += `<span class="item"><span class="draft-key"></span><span>Draft columns: the MTP block guesses on from its own guesses ${info('draft')}</span></span>`;
   }
+  $('howto-draft').hidden = !heatmap.draftCols;
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
@@ -799,12 +844,15 @@ function renderTable() {
   const r = res!;
   let html = '<table class="lens-table"><thead><tr><th scope="col">Layer</th>';
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
+  // draft columns: header is the token the draft step reads
+  for (let t = r.nTokens; t < heatmap.nCols; t++) html += `<th scope="col" class="tok draft" title="Draft ${t - r.nTokens + 1}: not in the prompt">${esc(piece(heatmap.colToken(t)))}</th>`;
   html += '</tr></thead><tbody>';
   if (heatmap.mtpRows) {
     html += '<tr class="mtp-row"><th scope="row" title="MTP block: the same next token, guessed one position earlier">MTP</th>';
-    for (let t = 0; t < r.nTokens; t++) {
-      const c = heatmap.mtpCell(t) * r.k;
-      html += c < 0 || r.mtpTopIds[c] < 0 ? '<td class="none">\u2013</td>' : `<td><span class="tok">${esc(piece(r.mtpTopIds[c]))}</span><span class="p">${pct(r.mtpTopProbs[c])}</span></td>`;
+    for (let t = 0; t < heatmap.nCols; t++) {
+      const m = heatmap.mtpAt(t);
+      const cls = t >= r.nTokens ? ' class="draft"' : '';
+      html += !m ? '<td class="none">\u2013</td>' : `<td${cls}><span class="tok">${esc(piece(m.ids[m.c * r.k]))}</span><span class="p">${pct(m.probs[m.c * r.k])}</span></td>`;
     }
     html += '</tr>';
   }
@@ -814,7 +862,7 @@ function renderTable() {
       const c = (l * r.nTokens + t) * r.k;
       html += `<td><span class="tok">${esc(piece(r.topIds[c]))}</span><span class="p">${pct(r.topProbs[c])}</span></td>`;
     }
-    html += '</tr>';
+    html += '<td class="draft-empty"></td>'.repeat(heatmap.draftCols) + '</tr>';
   }
   tableWrap.innerHTML = html + '</tbody></table>';
 }
@@ -843,6 +891,7 @@ function placeTooltip(x: number, y: number) {
 function showMtpTooltip(pos: number, x: number, y: number) {
   const r = res!;
   const tok = (id: number) => `<span class="tok">${esc(piece(id))}</span>`;
+  if (pos >= r.nTokens) return showDraftTooltip(pos, x, y);
   const c = heatmap.mtpCell(pos);
   if (c < 0) {
     tooltip.innerHTML = `<div class="tt-head">MTP, after ${tok(r.tokens[pos])}</div><div class="tt-foot tt-only">No MTP guess here: the MTP block guesses from the position before, and this is the first token.</div>`;
@@ -860,6 +909,24 @@ function showMtpTooltip(pos: number, x: number, y: number) {
     `<div class="tt-head">MTP guess for the token after ${tok(r.tokens[pos])}</div>` +
     `<table>${rows}</table>` +
     `<div class="tt-foot">Entropy ${r.mtpEntropy[c].toFixed(2)} nats. Guessed one position earlier: the MTP block read the final layer at ${tok(r.tokens[pos - 1])} plus the prompt token ${tok(r.tokens[pos])}, two tokens ahead of ${tok(r.tokens[pos - 1])}. The layers below guess the same token.${actual}${neutral}</div>`;
+  placeTooltip(x, y);
+}
+
+/** draft column: the MTP block read its own previous guess (x1: the final prediction) */
+function showDraftTooltip(pos: number, x: number, y: number) {
+  const r = res!;
+  const tok = (id: number) => `<span class="tok">${esc(piece(id))}</span>`;
+  const j = pos - r.nTokens;
+  const m = heatmap.mtpAt(pos)!;
+  let rows = '';
+  for (let i = 0; i < r.k; i++) rows += `<tr><td class="tok">${esc(piece(m.ids[m.c * r.k + i]))}</td><td class="num">${pct(m.probs[m.c * r.k + i])}</td></tr>`;
+  const input = j === 0 ? `${tok(r.draftTokens[0])}, the final layer's prediction after the prompt` : `its own guess ${tok(r.draftTokens[j])} from draft ${j}`;
+  const mode = colorMode();
+  const neutral = mode === 'prob' || mode === 'entropy' ? '' : `<br>Not shaded: MTP has no ${mode === 'kl' ? 'KL' : 'word probabilities'}.`;
+  tooltip.innerHTML =
+    `<div class="tt-head">Draft ${j + 1}: MTP guess for the token after ${tok(r.draftTokens[j])}</div>` +
+    `<table>${rows}</table>` +
+    `<div class="tt-foot">Entropy ${m.entropy[m.c].toFixed(2)} nats. Drafted by the MTP block from its own previous guess, as in speculative decoding: it read ${input}, plus ${j === 0 ? 'the final hidden state at the last prompt token' : 'its own output from that step'}. Not in the prompt, and not checked against the model.${neutral}</div>`;
   placeTooltip(x, y);
 }
 
@@ -937,6 +1004,7 @@ async function retarget(pos: number, id: number) {
     // reuse with targets skips KL, and runs without MTP; neither depends on the targets
     res.kl = prev.kl;
     ({ nMtp: res.nMtp, mtpTopIds: res.mtpTopIds, mtpTopProbs: res.mtpTopProbs, mtpEntropy: res.mtpEntropy } = prev);
+    ({ nDraft: res.nDraft, draftTokens: res.draftTokens, draftTopIds: res.draftTopIds, draftTopProbs: res.draftTopProbs, draftEntropy: res.draftEntropy } = prev);
     const pieces = prev.pieces;
     renderTimings(res, performance.now() - t0);
     for (const [k, v] of pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
@@ -964,7 +1032,8 @@ canvas.addEventListener('click', (ev) => {
   if (!h) return;
   selected = h;
   render();
-  trace(h.pos);
+  // draft columns are past the prompt, there is nothing to trace
+  if (h.pos < res!.nTokens) trace(h.pos);
   if (lastPointer !== 'mouse') {
     showTooltip(h.layer, h.pos, ev.clientX, ev.clientY);
     tapScroll = [scrollX, scrollY, heatmapWrap.scrollLeft];
@@ -989,14 +1058,13 @@ canvas.addEventListener('keydown', (ev) => {
   if (ev.key in moves) {
     ev.preventDefault();
     const [dl, dp] = moves[ev.key];
-    selected = {
-      layer: Math.max(0, Math.min(res.nLayers - 1 + heatmap.mtpRows, s.layer + dl)),
-      pos: Math.max(0, Math.min(res.nTokens - 1, s.pos + dp)),
-    };
+    const layer = Math.max(0, Math.min(res.nLayers - 1 + heatmap.mtpRows, s.layer + dl));
+    // only the MTP row reaches into the draft columns
+    selected = { layer, pos: Math.max(0, Math.min((layer >= res.nLayers ? heatmap.nCols : res.nTokens) - 1, s.pos + dp)) };
     render();
     const rect = canvas.getBoundingClientRect();
     showTooltip(selected.layer, selected.pos, rect.left + LEFT + (selected.pos + 0.5) * CELL_W, rect.top + heatmap.rowY(selected.layer) + CELL_H);
-  } else if (ev.key === 'Enter' && selected) {
+  } else if (ev.key === 'Enter' && selected && selected.pos < res.nTokens) {
     trace(selected.pos);
   } else if (ev.key === 'Escape') {
     tooltip.hidden = true;
@@ -1046,6 +1114,17 @@ fileInput.onchange = () => {
 btnRun.onclick = () => run();
 btnContinue.onclick = () => continueRun(1);
 btnContinue5.onclick = () => continueRun(5);
+// MTP settings: a change runs the lens again, so the row and draft columns follow at once
+const mtpChanged = () => {
+  mtpDraft.disabled = !useMtp.checked;
+  updateUrl();
+  if (res && wllama.isModelLoaded() && !busy) run();
+};
+useMtp.onchange = mtpChanged;
+mtpDraft.onchange = () => {
+  mtpDraft.value = String(draftCount());
+  mtpChanged();
+};
 useChat.onchange = () => {
   reply = '';
   syncChat();
@@ -1150,6 +1229,10 @@ if (promptParam !== null) promptEl.value = promptParam;
 // checked but disabled until a model with a chat template is loaded
 useChat.checked = urlParams.get('chat') === '1';
 reply = (useChat.checked && urlParams.get('reply')) || '';
+useMtp.checked = urlParams.get('mtp') !== '0';
+mtpDraft.value = String(urlParams.get('draft') ?? DRAFT_DEFAULT);
+mtpDraft.value = String(draftCount());
+mtpDraft.disabled = !useMtp.checked;
 
 refreshCache().then(async () => {
   await search('');

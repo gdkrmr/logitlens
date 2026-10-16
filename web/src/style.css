@@ -450,6 +450,14 @@ progress {
   background: var(--sunk);
   outline: 1px solid var(--rule);
 }
+/* draft key: a dashed cell, like the drafted MTP cells */
+.legend .draft-key {
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px dashed var(--ink-2);
+  background: var(--sunk);
+}
 .scroll-x {
   overflow-x: auto;
   max-width: 100%;
@@ -536,6 +544,18 @@ progress {
 }
 .lens-table td.none {
   color: var(--ink-3);
+}
+/* draft columns: past the prompt, only the MTP row has cells */
+.lens-table th.draft {
+  font-style: italic;
+  border-bottom-style: dashed;
+}
+.lens-table td.draft {
+  outline: 1px dashed var(--ink-3);
+  outline-offset: -3px;
+}
+.lens-table td.draft-empty {
+  background: var(--sunk);
 }
 .lens-table td .p {
   color: var(--ink-3);
@@ -1217,4 +1237,24 @@ progress {
 }
 .check-row .check {
   margin-top: 0;
+}
+.mtp-settings .num {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.mtp-settings input[type='number'] {
+  width: 4.5em;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.mtp-settings input[type='number']:disabled {
+  color: var(--ink-3);
+}
+.mtp-settings .hint {
+  margin: 6px 0 0;
 }

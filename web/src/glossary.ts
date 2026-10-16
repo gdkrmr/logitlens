@@ -38,6 +38,11 @@ const TERMS: Record<string, { title: string; ask: string; text: string }> = {
     ask: 'What is MTP?',
     text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead. Its guesses are used to speed up writing text. The MTP row puts each guess in the column of the word it guesses, so it lines up with the layers below; the first column is empty.',
   },
+  draft: {
+    title: 'Draft tokens',
+    ask: 'What are draft tokens?',
+    text: "Tokens the MTP block guesses past the end of your prompt. It starts from the model's final prediction, then feeds each of its own guesses back in, like llama.cpp does for speculative decoding. The full model would then check them; here they are not checked.",
+  },
   parameters: {
     title: 'Parameters',
     ask: 'What are parameters?',
