@@ -1,5 +1,7 @@
 // native logit lens: prints the top-1 token per layer and position
-// usage: lens-cli -m model.gguf -p "prompt" [-k 5] [-ngl 99] [--json out.json]
+// usage: lens-cli -m model.gguf -p "prompt" [-k 5] [-ngl 99] [--json out.json] [--continue N]
+// --continue N: append N greedy tokens one by one with incremental runs, then compare with a full run
+// -ub N: tokens per decode call; llama.cpp results depend a bit on the batch split, use -ub 1 for an exact compare
 
 #include <cstdio>
 #include <cstdlib>
@@ -30,7 +32,7 @@ static std::string piece(const llama_vocab *vocab, llama_token t)
 int main(int argc, char **argv)
 {
   std::string model_path, prompt = "The capital of France is", json_path;
-  int k = 5, ngl = 99;
+  int k = 5, ngl = 99, n_cont = 0, n_ub = lens_batch;
   for (int i = 1; i < argc; i++)
   {
     std::string a = argv[i];
@@ -44,9 +46,13 @@ int main(int argc, char **argv)
       ngl = atoi(argv[++i]);
     else if (a == "--json" && i + 1 < argc)
       json_path = argv[++i];
+    else if (a == "-ub" && i + 1 < argc)
+      n_ub = atoi(argv[++i]);
+    else if (a == "--continue" && i + 1 < argc)
+      n_cont = atoi(argv[++i]);
     else
     {
-      fprintf(stderr, "usage: %s -m model.gguf -p prompt [-k 5] [-ngl 99] [--json out.json]\n", argv[0]);
+      fprintf(stderr, "usage: %s -m model.gguf -p prompt [-k 5] [-ngl 99] [--json out.json] [--continue N] [-ub 64]\n", argv[0]);
       return 1;
     }
   }
@@ -75,9 +81,9 @@ int main(int argc, char **argv)
 
   lens_capture cap;
   auto cparams = llama_context_default_params();
-  cparams.n_ctx = std::max(512, n);
-  cparams.n_batch = lens_batch;
-  cparams.n_ubatch = lens_batch;
+  cparams.n_ctx = std::max(512, n + n_cont);
+  cparams.n_batch = n_ub;
+  cparams.n_ubatch = n_ub;
   cparams.n_seq_max = 1;
   cparams.cb_eval = lens_cb_eval;
   cparams.cb_eval_user_data = &cap;
@@ -91,14 +97,58 @@ int main(int argc, char **argv)
   lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, out);
   const int64_t t1 = ggml_time_us();
 
+  if (n_cont > 0)
+  {
+    for (int i = 0; i < n_cont; i++)
+    {
+      tokens.push_back(out.res.top_ids[((out.n_layers - 1) * out.n_tokens + out.n_tokens - 1) * k]);
+      lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, out, false, true);
+      printf("continue tokens=%d forward %.1f ms, projection %.1f ms\n", out.n_tokens, out.t_decode_ms, out.t_project_ms);
+    }
+    // hidden states too: RMSNorm hides a wrong scale of a whole row from the readout
+    const auto inc_hidden = cap.hidden;
+    // also append all new tokens in one incremental run
+    lens_run_output jump;
+    lens_run(lctx, cap, proj, std::vector<llama_token>(tokens.begin(), tokens.begin() + n), k, 0, 0, {}, jump);
+    lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, jump, false, true);
+    printf("one step +%d tokens: forward %.1f ms, projection %.1f ms\n", n_cont, jump.t_decode_ms, jump.t_project_ms);
+    lens_run_output full;
+    lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, full);
+    for (const lens_run_output *o : {&out, &jump})
+    {
+      int top1_diff = 0, id_diff = 0;
+      float max_diff = 0;
+      for (int r = 0; r < o->res.n_rows; r++)
+      {
+        top1_diff += o->res.top_ids[r * k] != full.res.top_ids[r * k];
+        for (int j = 0; j < k; j++)
+        {
+          id_diff += o->res.top_ids[r * k + j] != full.res.top_ids[r * k + j];
+          max_diff = std::max(max_diff, std::abs(o->res.top_probs[r * k + j] - full.res.top_probs[r * k + j]));
+        }
+        id_diff += o->res.target_ids[r] != full.res.target_ids[r];
+        id_diff += o->res.target_rank[r] != full.res.target_rank[r];
+        for (float d : {o->res.entropy[r] - full.res.entropy[r], o->res.target_prob[r] - full.res.target_prob[r], o->res.kl[r] - full.res.kl[r]})
+          max_diff = std::max(max_diff, std::abs(d));
+      }
+      printf("%s vs full: cells=%d top-1 diffs=%d id/rank diffs=%d max abs diff=%g\n", o == &out ? "one by one" : "one step", o->res.n_rows, top1_diff, id_diff, max_diff);
+    }
+    float max_h = 0;
+    for (size_t l = 0; l < cap.hidden.size(); l++)
+      for (size_t i = 0; i < cap.hidden[l].size() && i < inc_hidden[l].size(); i++)
+        max_h = std::max(max_h, std::abs(cap.hidden[l][i] - inc_hidden[l][i]));
+    printf("one by one vs full: hidden states max abs diff=%g\n", max_h);
+    printf("full run: forward %.1f ms, projection %.1f ms\n", full.t_decode_ms, full.t_project_ms);
+  }
+
   // sanity check: last lens layer must agree with the model's own prediction
   // the lens pass skips the output head, so run a plain pass for the logits
   const int n_vocab = llama_vocab_n_tokens(vocab);
   int mismatches = 0;
   llama_memory_clear(llama_get_memory(lctx), true);
-  for (int i0 = 0; i0 < out.n_tokens; i0 += lens_batch)
+  for (int i0 = 0; i0 < out.n_tokens; i0 += n_ub)
   {
-    const int nb = std::min(lens_batch, out.n_tokens - i0);
+    const int nb = std::min(n_ub, out.n_tokens - i0);
     if (lens_decode(lctx, tokens, i0, nb) != 0)
       return 1;
     for (int t = 0; t < nb; t++)

@@ -33,7 +33,7 @@ cmake -S dev/native-test -B dev/native-test/build -DCMAKE_BUILD_TYPE=Release
 cmake --build dev/native-test/build --target native-test -j
 ```
 
-There is no linter and no test suite for `web/` or `native/`. `lens-cli` prints "last-layer mismatches=N", which must be 0: the lens's top token on the last layer has to equal the model's own prediction. That is the only correctness check the project uses (by design, see below).
+There is no linter and no test suite for `web/` or `native/`. `lens-cli` prints "last-layer mismatches=N", which must be 0: the lens's top token on the last layer has to equal the model's own prediction. That is the only correctness check the project uses (by design, see below). `lens-cli --continue N` also compares incremental runs (Continue) cell by cell, plus the captured hidden states, against a full run; this is exact only with `-ub 1`, because llama.cpp's results depend slightly on how tokens are batched, so at the default batch size small differences, and 2-3 mismatches from the batched check, are expected.
 
 Test model: `~/.lmstudio/models/unsloth/Qwen3.5-0.8B-MTP-GGUF/Qwen3.5-0.8B-UD-Q4_K_XL.gguf` (arch `qwen35`). Use local GGUFs; ask before downloading models.
 

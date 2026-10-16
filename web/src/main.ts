@@ -539,7 +539,8 @@ async function run(continuing = false): Promise<boolean> {
     let ms: number;
     try {
       lastInput = lensInput();
-      res = await wllama.logitLens({ prompt: lastInput, k: 5 });
+      // continuing: the lens runs only the new tokens if the old ones are unchanged
+      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing });
     } finally {
       ms = stop();
     }
