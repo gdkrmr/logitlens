@@ -63,12 +63,15 @@ export function info(term: string): string {
 
 let open: HTMLButtonElement | null = null;
 let pinned = false;
+let hideTimer = 0;
 
 export function initGlossary() {
   const pop = document.getElementById('gloss')!;
   // markers written in index.html get the same attributes as info()
   document.querySelectorAll<HTMLButtonElement>('button.info[data-term]').forEach((b) => {
     const t = TERMS[b.dataset.term!];
+    // an unknown term must not break the page
+    if (!t) return;
     b.type = 'button';
     b.textContent = 'i';
     b.setAttribute('aria-label', t.ask);
@@ -77,6 +80,7 @@ export function initGlossary() {
   });
 
   const close = () => {
+    clearTimeout(hideTimer);
     open?.setAttribute('aria-expanded', 'false');
     open = null;
     pinned = false;
@@ -84,8 +88,9 @@ export function initGlossary() {
   };
 
   const show = (b: HTMLButtonElement) => {
-    if (open && open !== b) close();
     const t = TERMS[b.dataset.term!];
+    if (!t) return;
+    if (open && open !== b) close();
     open = b;
     b.setAttribute('aria-expanded', 'true');
     pop.replaceChildren(Object.assign(document.createElement('strong'), { textContent: t.title }), ' ', t.text);
@@ -110,11 +115,21 @@ export function initGlossary() {
   });
   document.addEventListener('pointerover', (ev) => {
     const b = marker(ev);
-    if (b && (ev as PointerEvent).pointerType === 'mouse' && !pinned) show(b);
+    if (b && (ev as PointerEvent).pointerType === 'mouse' && !pinned) {
+      clearTimeout(hideTimer);
+      show(b);
+    }
   });
+  // a hover-opened note closes after a short delay, so the pointer can move onto it and stay there
+  const closeSoon = () => {
+    clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => !pinned && close(), 300);
+  };
   document.addEventListener('pointerout', (ev) => {
-    if (marker(ev) && marker(ev) === open && !pinned) close();
+    if (marker(ev) && marker(ev) === open && !pinned) closeSoon();
   });
+  pop.addEventListener('pointerenter', () => clearTimeout(hideTimer));
+  pop.addEventListener('pointerleave', () => open && !pinned && closeSoon());
   // tap or click anywhere else closes it
   document.addEventListener('pointerdown', (ev) => {
     if (open && !marker(ev) && !pop.contains(ev.target as Node)) close();
