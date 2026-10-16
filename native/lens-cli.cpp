@@ -105,6 +105,8 @@ int main(int argc, char **argv)
       lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, out, false, true);
       printf("continue tokens=%d forward %.1f ms, projection %.1f ms\n", out.n_tokens, out.t_decode_ms, out.t_project_ms);
     }
+    // hidden states too: RMSNorm hides a wrong scale of a whole row from the readout
+    const auto inc_hidden = cap.hidden;
     // also append all new tokens in one incremental run
     lens_run_output jump;
     lens_run(lctx, cap, proj, std::vector<llama_token>(tokens.begin(), tokens.begin() + n), k, 0, 0, {}, jump);
@@ -131,6 +133,11 @@ int main(int argc, char **argv)
       }
       printf("%s vs full: cells=%d top-1 diffs=%d id/rank diffs=%d max abs diff=%g\n", o == &out ? "one by one" : "one step", o->res.n_rows, top1_diff, id_diff, max_diff);
     }
+    float max_h = 0;
+    for (size_t l = 0; l < cap.hidden.size(); l++)
+      for (size_t i = 0; i < cap.hidden[l].size() && i < inc_hidden[l].size(); i++)
+        max_h = std::max(max_h, std::abs(cap.hidden[l][i] - inc_hidden[l][i]));
+    printf("one by one vs full: hidden states max abs diff=%g\n", max_h);
     printf("full run: forward %.1f ms, projection %.1f ms\n", full.t_decode_ms, full.t_project_ms);
   }
 
