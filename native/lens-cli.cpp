@@ -3,6 +3,7 @@
 // --continue N: append N greedy tokens one by one with incremental runs, then compare with a full run
 // -ub N: tokens per decode call; llama.cpp results depend a bit on the batch split, use -ub 1 for an exact compare
 // --mtp: also run the NextN (MTP) block, print its t+2 guesses and check them against llama.cpp's own MTP logits
+// --mtp-draft N: also draft N tokens after the prompt with the MTP block (implies --mtp), check them against a plain MTP context chained like llama.cpp's draft-mtp, and compare them with greedy generation
 
 #include <cstdio>
 #include <cstdlib>
@@ -35,7 +36,7 @@ static std::string piece(const llama_vocab *vocab, llama_token t)
 int main(int argc, char **argv)
 {
   std::string model_path, prompt = "The capital of France is", json_path;
-  int k = 5, ngl = 99, n_cont = 0, n_ub = lens_batch;
+  int k = 5, ngl = 99, n_cont = 0, n_ub = lens_batch, n_draft = 0;
   bool use_mtp = false;
   for (int i = 1; i < argc; i++)
   {
@@ -56,9 +57,14 @@ int main(int argc, char **argv)
       n_cont = atoi(argv[++i]);
     else if (a == "--mtp")
       use_mtp = true;
+    else if (a == "--mtp-draft" && i + 1 < argc)
+    {
+      n_draft = std::max(0, atoi(argv[++i]));
+      use_mtp = true;
+    }
     else
     {
-      fprintf(stderr, "usage: %s -m model.gguf -p prompt [-k 5] [-ngl 99] [--json out.json] [--continue N] [-ub 64] [--mtp]\n", argv[0]);
+      fprintf(stderr, "usage: %s -m model.gguf -p prompt [-k 5] [-ngl 99] [--json out.json] [--continue N] [-ub 64] [--mtp] [--mtp-draft N]\n", argv[0]);
       return 1;
     }
   }
@@ -85,6 +91,7 @@ int main(int argc, char **argv)
   {
     fprintf(stderr, "model has no MTP block, --mtp ignored\n");
     use_mtp = false;
+    n_draft = 0;
   }
 
   std::vector<llama_token> tokens(prompt.size() + 8);
@@ -93,7 +100,7 @@ int main(int argc, char **argv)
 
   lens_capture cap;
   auto cparams = llama_context_default_params();
-  cparams.n_ctx = std::max(512, n + n_cont);
+  cparams.n_ctx = std::max(512, n + n_cont + n_draft + 2);
   cparams.n_batch = n_ub;
   cparams.n_ubatch = n_ub;
   cparams.n_seq_max = 1;
@@ -111,6 +118,7 @@ int main(int argc, char **argv)
     mtp.ctx = llama_init_from_model(model, mparams_ctx);
     if (!mtp.ctx)
       return 1;
+    mtp.n_draft = n_draft;
     pmtp = &mtp;
   }
 
@@ -121,6 +129,8 @@ int main(int argc, char **argv)
   const int64_t t0 = ggml_time_us();
   lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, out, false, false, pmtp);
   const int64_t t1 = ggml_time_us();
+  // drafts made at each prompt length, for the acceptance check
+  std::vector<std::vector<llama_token>> drafts = {out.draft_tokens};
 
   if (n_cont > 0)
   {
@@ -128,6 +138,7 @@ int main(int argc, char **argv)
     {
       tokens.push_back(out.res.top_ids[((out.n_layers - 1) * out.n_tokens + out.n_tokens - 1) * k]);
       lens_run(lctx, cap, proj, tokens, k, 0, 0, {}, out, false, true, pmtp);
+      drafts.push_back(out.draft_tokens);
       printf("continue tokens=%d forward %.1f ms, projection %.1f ms\n", out.n_tokens, out.t_decode_ms, out.t_project_ms);
     }
     // hidden states too: RMSNorm hides a wrong scale of a whole row from the readout
@@ -169,6 +180,9 @@ int main(int argc, char **argv)
     {
       compare("mtp one by one", out.mtp, full.mtp);
       compare("mtp one step", jump.mtp, full.mtp);
+      compare("draft one by one", out.draft, full.draft);
+      compare("draft one step", jump.draft, full.draft);
+      printf("draft tokens one by one / one step vs full: %s / %s\n", out.draft_tokens == full.draft_tokens ? "same" : "DIFFERENT", jump.draft_tokens == full.draft_tokens ? "same" : "DIFFERENT");
     }
     float max_h = 0;
     auto full_hidden = cap.hidden;
@@ -219,6 +233,20 @@ int main(int argc, char **argv)
         mismatches++;
     }
   }
+  // greedy continuation of the main model, for the draft acceptance
+  std::vector<llama_token> greedy(tokens.begin(), tokens.begin() + out.n_tokens);
+  for (int i = 0; n_draft > 0 && i <= n_draft; i++)
+  {
+    const int last = (int)greedy.size() - 1;
+    if (i > 0 && lens_decode(lctx, greedy, last, 1) != 0)
+      return 1;
+    const float *logits = llama_get_logits_ith(lctx, i > 0 ? 0 : (out.n_tokens - 1) % n_ub);
+    int best = 0;
+    for (int v = 1; v < n_vocab; v++)
+      if (logits[v] > logits[best])
+        best = v;
+    greedy.push_back(best);
+  }
   float last_kl = 0;
   for (int t = 0; t < out.n_tokens; t++)
     last_kl = std::max(last_kl, out.res.kl[(out.n_layers - 1) * out.n_tokens + t]);
@@ -226,6 +254,7 @@ int main(int argc, char **argv)
   // MTP check: llama.cpp's own MTP context (no capture) on its own h_nextn, as in its MTP draft
   // column t: NextN reads h at t and token t + 1, so its guess is for token t + 2
   int mtp_mismatches = 0, acc_prompt = 0, acc_main = 0;
+  std::vector<llama_token> ref_draft;
   float max_dh = 0;
   if (pmtp)
   {
@@ -255,6 +284,35 @@ int main(int argc, char **argv)
         mtp_mismatches += out.mtp.top_ids[(s_last * out.n_tokens + t) * k] != best;
       }
     }
+    // reference draft, as in common_speculative_impl_draft_mtp::draft(): token id_last at pos0 + i with the h_nextn of the step before
+    if (n_draft > 0)
+    {
+      llama_set_embeddings_nextn(mref, true, true);
+      std::vector<float> h(h_ref.end() - n_embd, h_ref.end());
+      llama_token tok = greedy[out.n_tokens];
+      for (int i = 0; i < n_draft; i++)
+      {
+        llama_batch_ext *batch = llama_batch_ext_init(mref);
+        const llama_pos p = out.n_tokens + i;
+        const int32_t idx = llama_batch_ext_add_token(batch, 0, tok);
+        llama_batch_ext_set_pos(batch, idx, &p);
+        llama_batch_ext_set_embd_state(batch, idx, {h.data(), 1, (size_t)n_embd});
+        llama_batch_ext_set_output_logits(batch, idx, true);
+        const int ret = llama_process(mref, LLAMA_PROCESS_TYPE_DECODE, batch);
+        llama_batch_ext_free(batch);
+        if (ret != 0)
+          return 1;
+        const float *logits = llama_get_logits_ith(mref, idx);
+        int best = 0;
+        for (int v = 1; v < n_vocab; v++)
+          if (logits[v] > logits[best])
+            best = v;
+        ref_draft.push_back(best);
+        const float *hn = llama_get_embeddings_nextn_ith(mref, idx);
+        h.assign(hn, hn + n_embd);
+        tok = best;
+      }
+    }
     llama_free(mref);
     for (int t = 0; t + 1 < out.n_tokens; t++)
     {
@@ -269,6 +327,37 @@ int main(int argc, char **argv)
   if (pmtp)
     printf("mtp: mismatches vs llama.cpp MTP=%d of %d, h_nextn max abs diff=%g, t+2 acceptance: prompt %d/%d, main model %d/%d\n",
            mtp_mismatches, out.n_tokens - 1, max_dh, acc_prompt, std::max(0, out.n_tokens - 2), acc_main, out.n_tokens - 1);
+  if (n_draft > 0)
+  {
+    // draft_tokens[0] is x1, the main model's own next token; drafts are draft_tokens[1..]
+    int draft_mismatches = (int)std::abs((int)ref_draft.size() - out.n_draft), head_diffs = 0;
+    for (int j = 0; j < out.n_draft && j < (int)ref_draft.size(); j++)
+    {
+      draft_mismatches += out.draft_tokens[j + 1] != ref_draft[j];
+      head_diffs += out.draft.top_ids[((out.n_mtp - 1) * out.n_draft + j) * k] != out.draft_tokens[j + 1];
+    }
+    printf("draft: x1 %s (main model top-1 %s)", piece(vocab, out.draft_tokens[0]).c_str(), out.draft_tokens[0] == greedy[out.n_tokens] ? "same" : "DIFFERENT");
+    for (int j = 0; j < out.n_draft; j++)
+      printf(" | %s %.2f / greedy %s", piece(vocab, out.draft_tokens[j + 1]).c_str(), out.draft.top_probs[((out.n_mtp - 1) * out.n_draft + j) * k], piece(vocab, greedy[out.n_tokens + j + 1]).c_str());
+    printf("\ndraft: mismatches vs reference=%d of %d, lens top-1 vs drafted=%d\n", draft_mismatches, n_draft, head_diffs);
+    // acceptance: drafts that equal the greedy tokens, all and as an accepted prefix (as speculative decoding verifies them)
+    int n_pos = 0, n_eq = 0, n_prefix = 0;
+    for (size_t s = 0; s < drafts.size(); s++)
+    {
+      const auto &d = drafts[s];
+      const int L = n + (int)s;
+      bool prefix = true;
+      for (int j = 1; j < (int)d.size() && L + j < (int)greedy.size(); j++)
+      {
+        const bool eq = d[j] == greedy[L + j];
+        n_pos++;
+        n_eq += eq;
+        prefix = prefix && eq;
+        n_prefix += prefix;
+      }
+    }
+    printf("draft acceptance vs greedy generation over %zu draft(s): %d/%d tokens equal, %d accepted as prefix\n", drafts.size(), n_eq, n_pos, n_prefix);
+  }
   printf("\n");
 
   // table: layers top to bottom (last layer first), positions across
