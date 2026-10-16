@@ -79,7 +79,10 @@
           <h2 id="prompt-h" class="label">Prompt</h2>
           <p id="model-indicator" class="model-indicator" hidden><a href="#model-h"></a></p>
           <div class="prompt-row">
-            <textarea id="prompt" rows="2" spellcheck="false">The Eiffel Tower is located in the city of</textarea>
+            <div id="prompts" class="prompts">
+              <div class="prompt-field"><span class="prompt-tag" aria-hidden="true">A</span><textarea id="prompt" rows="2" spellcheck="false" aria-label="Prompt">The Eiffel Tower is located in the city of</textarea></div>
+              <div id="field-b" class="prompt-field" hidden><span class="prompt-tag" aria-hidden="true">B</span><textarea id="prompt-b" rows="2" spellcheck="false" aria-label="Second prompt"></textarea></div>
+            </div>
             <div class="prompt-actions">
               <button id="btn-run" type="button" class="btn">Run lens</button>
               <div class="continue" role="group" aria-label="Append the predicted token and run again">
@@ -91,6 +94,9 @@
           <div class="chat-row">
             <label class="check" id="chat-label" title="Load a model first"><input id="use-chat" type="checkbox" disabled /> Chat format</label><button class="info" data-term="chat"></button>
             <span id="chat-note" class="chat-note"></span>
+          </div>
+          <div class="chat-row">
+            <label class="check"><input id="use-compare" type="checkbox" /> Compare with a second prompt</label><button class="info" data-term="compare"></button>
           </div>
           <div class="examples" role="group" aria-labelledby="examples-label">
             <span id="examples-label" class="examples-label">Try</span>
@@ -152,15 +158,22 @@
               <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. A stronger blue means more confident.</li>
               <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
               <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: a stronger blue means the layer already thinks like the final answer.</li>
+              <li>With <strong>Compare</strong> on, a second grid shows the second prompt on the same color scale, with the columns lined up. A dark bar under the tokens marks where the two prompts start to differ.</li>
               <li>The small <strong>i</strong> markers explain terms; click or tap them.</li>
               <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>
             </ul>
           </details>
           <div id="legend" class="legend"></div>
           <div id="heatmap-wrap" class="scroll-x">
+            <p id="cap-a" class="hm-cap" hidden></p>
             <div class="heatmap-row">
-              <canvas id="heatmap-axis" aria-hidden="true"></canvas>
-              <canvas id="heatmap" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
+              <canvas id="heatmap-axis" class="hm-axis" aria-hidden="true"></canvas>
+              <canvas id="heatmap" class="hm-cells" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
+            </div>
+            <p id="cap-b" class="hm-cap" hidden></p>
+            <div id="row-b" class="heatmap-row" hidden>
+              <canvas id="heatmap-b-axis" class="hm-axis" aria-hidden="true"></canvas>
+              <canvas id="heatmap-b" class="hm-cells" tabindex="0" aria-label="Logit lens heatmap for the second prompt. Use arrow keys to move between cells and Enter to trace a position."></canvas>
             </div>
           </div>
           <div id="table-wrap" class="scroll-x" hidden></div>

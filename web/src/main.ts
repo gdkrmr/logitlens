@@ -35,11 +35,17 @@ const exampleNote = $<HTMLParagraphElement>('example-note');
 const summaryEl = $<HTMLParagraphElement>('summary');
 
 // each one shows something at a glance in small models; the note says what to look for
-const EXAMPLES = [
+const EXAMPLES: { label: string; prompt: string; prompt2?: string; note: string }[] = [
   { label: 'A fact', prompt: 'The Eiffel Tower is located in the city of', note: 'Look at the last column: in which layer does "Paris" first show up, and where does the model settle on it?' },
   { label: 'Counting', prompt: 'One, two, three, four,', note: 'An easy pattern: the model is sure of "five" long before the last layer.' },
   { label: 'Who did what', prompt: 'Mary and John went to the store. John gave a drink to', note: 'The model has to keep track of who is who. Watch how late in the layers "Mary" appears.' },
   { label: 'Opposites', prompt: 'The opposite of hot is', note: '"cold" shows up in the middle layers, but the model keeps hesitating before it commits.' },
+  {
+    label: 'Two prompts',
+    prompt: 'The capital of France is',
+    prompt2: 'The capital of Germany is',
+    note: 'Two prompts one word apart, on the same scale. Compare the last columns: in which layer do the two guesses split?',
+  },
 ];
 const modelCurrent = $<HTMLParagraphElement>('model-current');
 const modelIndicator = $<HTMLParagraphElement>('model-indicator');
@@ -86,7 +92,6 @@ const btnRun = $<HTMLButtonElement>('btn-run');
 const runStatus = $<HTMLSpanElement>('run-status');
 const resultEl = $<HTMLElement>('result');
 const legend = $<HTMLDivElement>('legend');
-const canvas = $<HTMLCanvasElement>('heatmap');
 const heatmapWrap = $<HTMLDivElement>('heatmap-wrap');
 const tableWrap = $<HTMLDivElement>('table-wrap');
 const tooltip = $<HTMLDivElement>('tooltip');
@@ -95,12 +100,16 @@ const traceDesc = $<HTMLParagraphElement>('trace-desc');
 const traceChips = $<HTMLDivElement>('trace-chips');
 const tracePlot = $<HTMLDivElement>('trace-plot');
 
+const promptB = $<HTMLTextAreaElement>('prompt-b');
+const fieldB = $<HTMLDivElement>('field-b');
+const promptsEl = $<HTMLDivElement>('prompts');
+const useCompare = $<HTMLInputElement>('use-compare');
+const capA = $<HTMLParagraphElement>('cap-a');
+const capB = $<HTMLParagraphElement>('cap-b');
+const rowB = $<HTMLDivElement>('row-b');
+
 const WASM = { default: new URL('wasm/wllama.wasm', document.baseURI).href };
 let wllama = new Wllama(WASM, { suppressNativeLog: true });
-const heatmap = new Heatmap(canvas, $<HTMLCanvasElement>('heatmap-axis'));
-let res: LogitLensResult | null = null;
-let selected: { layer: number; pos: number } | null = null;
-let tracedPos: number | null = null;
 
 // the word the grid can be shaded by (#3), and the second word it can be contrasted with (#2)
 interface WordShade {
@@ -108,8 +117,42 @@ interface WordShade {
   probs: Float32Array;
   ranks: Int32Array;
 }
-let shadeWord: WordShade | null = null;
-let contrastWord: WordShade | null = null;
+
+/**
+ * One prompt and its grid. Compare mode (#11) shows a second one, B.
+ * The lens keeps the hidden states of only its last forward pass, so every call that reuses them
+ * goes through ensureCached(side), which runs that side's prompt again when the other one is cached.
+ */
+interface Side {
+  name: 'A' | 'B';
+  canvas: HTMLCanvasElement;
+  heatmap: Heatmap;
+  res: LogitLensResult | null;
+  prompt: string; // the prompt as typed, for the caption
+  input: string; // the text the lens read
+  owner: Wllama | null; // reuse is only valid in the instance that ran it
+  word: WordShade | null;
+  contrast: WordShade | null;
+}
+const side = (name: 'A' | 'B', id: string): Side => {
+  const canvas = $<HTMLCanvasElement>(id);
+  return { name, canvas, heatmap: new Heatmap(canvas, $<HTMLCanvasElement>(`${id}-axis`)), res: null, prompt: '', input: '', owner: null, word: null, contrast: null };
+};
+const A = side('A', 'heatmap');
+const B = side('B', 'heatmap-b');
+/** the sides on screen: B only in compare mode, after a run that included it */
+const shown = () => (useCompare.checked && B.res ? [A, B] : [A]);
+const comparing = () => shown().length === 2;
+// the lens input whose hidden states the lens currently holds, null when unknown
+let lensCached: string | null = null;
+
+let selected: { side: Side; layer: number; pos: number } | null = null;
+let traced: { side: Side; pos: number } | null = null;
+let shadeId: number | null = null;
+let contrastId: number | null = null;
+// token pieces of the results on screen, see syncPieces
+let pieces = new Map<number, string>();
+const syncPieces = () => (pieces = new Map([...(A.res?.pieces ?? []), ...(B.res?.pieces ?? [])]));
 let busy = false;
 
 // chat format (#9): the prompt becomes the user message, and Continue grows the model's reply
@@ -117,14 +160,16 @@ let chatFormat: ChatFormat | null = null;
 let reply = '';
 let lastInput = '';
 const chatOn = () => useChat.checked && !!chatFormat;
-/** the text the lens reads */
-const lensInput = () => (chatOn() ? chatFormat!.render(promptEl.value) + reply : promptEl.value);
+/** the text the lens reads for one prompt; the reply only grows with Continue, which compare mode does not offer */
+const lensInput = (text: string) => (chatOn() ? chatFormat!.render(text) + (useCompare.checked ? '' : reply) : text);
 
 const colorMode = (): ColorMode => (document.querySelector<HTMLInputElement>('input[name=color]:checked')!.value as ColorMode);
 const viewMode = () => document.querySelector<HTMLInputElement>('input[name=view]:checked')!.value;
 const pct = (p: number) => (p >= 0.995 ? '100%' : p < 0.001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-const piece = (id: number) => showPiece(res?.pieces.get(id));
+const piece = (id: number) => showPiece(pieces.get(id));
+/** a word in quotes for sentences, with the leading space trimmed */
+const quote = (id: number) => `\u201c<span class="tok">${esc(showPiece(pieces.get(id)).trim() || piece(id))}</span>\u201d`;
 
 /////////////////////////////////////////////
 // model search
@@ -322,7 +367,11 @@ function setBusy(b: boolean) {
   fileInput.disabled = b;
   // stays clickable without a model, so a click can explain what to do
   btnRun.disabled = b;
-  btnContinue.disabled = btnContinue5.disabled = b || !res || !wllama.isModelLoaded();
+  // Continue grows one prompt; with two, each would append a different word, so it is off in compare mode
+  btnContinue.disabled = btnContinue5.disabled = b || !A.res || !wllama.isModelLoaded() || useCompare.checked;
+  btnContinue.title = useCompare.checked ? 'Continue works on one prompt. Turn off the comparison to use it.' : 'Append the final prediction to the prompt and run again';
+  btnContinue5.title = useCompare.checked ? btnContinue.title : 'Append five predictions, one at a time';
+  useCompare.disabled = b;
   syncChat();
 }
 
@@ -334,6 +383,7 @@ function syncChat() {
       ? "Wrap the prompt in the model's chat format: your prompt becomes the user message, and the last column predicts the first word of the model's reply"
       : 'This model has no chat template. Base models usually have none.';
   if (!chatOn()) return chatNote.replaceChildren();
+  if (useCompare.checked) return (chatNote.textContent = 'Both prompts are user messages; the last columns predict the start of each reply.');
   if (!reply) return (chatNote.textContent = 'Your prompt is the user message; the last column predicts the start of the reply.');
   const clear = Object.assign(document.createElement('button'), { type: 'button', className: 'link-btn', textContent: 'Clear reply' });
   clear.onclick = () => {
@@ -362,18 +412,23 @@ function ticker(el: HTMLElement, text: () => string) {
   };
 }
 
-function renderTimings(r: LogitLensResult, totalMs: number) {
-  const other = Math.max(0, totalMs - r.tDecodeMs - r.tProjectMs);
+/** rs: the results of one run, two in compare mode */
+function renderTimings(rs: LogitLensResult[], totalMs: number) {
+  const r = rs[0];
+  const decode = rs.reduce((a, x) => a + x.tDecodeMs, 0);
+  const project = rs.reduce((a, x) => a + x.tProjectMs, 0);
+  const other = Math.max(0, totalMs - decode - project);
   const items: [string, string, string?][] = [];
   if (loadMs !== null) items.push(['Model load', fmtMs(loadMs)]);
-  items.push(['Forward pass', r.tDecodeMs > 0 ? fmtMs(r.tDecodeMs) : 'reused']);
-  items.push(['Projection', fmtMs(r.tProjectMs)]);
+  items.push(['Forward pass', decode > 0 ? fmtMs(decode) : 'reused']);
+  items.push(['Projection', fmtMs(project)]);
   items.push(['Other', fmtMs(other)]);
   items.push(['Lens total', fmtMs(totalMs), 'total']);
-  timingsSummary.textContent = `Lens ${fmtMs(totalMs)} \u00b7 ${r.nTokens} tokens \u00d7 ${r.nLayers} layers`;
+  const tokens = rs.map((x) => x.nTokens).join(' + ');
+  timingsSummary.textContent = `Lens ${fmtMs(totalMs)} \u00b7 ${tokens} tokens \u00d7 ${r.nLayers} layers`;
   timingsEl.innerHTML =
     items.map(([k, v, cls]) => `<div${cls ? ` class="${cls}"` : ''}><dt>${k}</dt><dd>${v}</dd></div>`).join('') +
-    `<div class="note">${r.nTokens} tokens \u00d7 ${r.nLayers} layers on ${esc(r.backend.replace(/^(\w+): \1$/, '$1'))}</div>`;
+    `<div class="note">${tokens} tokens \u00d7 ${r.nLayers} layers${rs.length > 1 ? ', two prompts,' : ''} on ${esc(r.backend.replace(/^(\w+): \1$/, '$1'))}</div>`;
   timingsBox.hidden = false;
 }
 
@@ -472,6 +527,7 @@ async function load(source: { url: string } | { files: File[] }) {
       loadMs = stop();
     }
     loadedUrl = 'url' in source ? source.url : null;
+    lensCached = null;
     chatFormat = ChatFormat.from(wllama.getChatTemplate());
     if (!chatFormat) useChat.checked = false;
     updateUrl();
@@ -500,7 +556,8 @@ function updateUrl() {
   if (loadedUrl) q.set('model', loadedUrl.startsWith(location.origin) ? loadedUrl.slice(location.origin.length) : loadedUrl);
   if (promptEl.value) q.set('prompt', promptEl.value);
   if (useChat.checked) q.set('chat', '1');
-  if (useChat.checked && reply) q.set('reply', reply);
+  if (useChat.checked && reply && !useCompare.checked) q.set('reply', reply);
+  if (useCompare.checked) q.set('prompt2', promptB.value);
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
@@ -526,35 +583,78 @@ function needModel() {
   target.focus({ preventScroll: true });
 }
 
+/** a forward pass; it replaces the hidden states the lens holds */
+async function lensForward(input: string, incremental: boolean): Promise<LogitLensResult> {
+  lensCached = null;
+  const r = await wllama.logitLens({ prompt: input, k: 5, incremental });
+  lensCached = input;
+  return r;
+}
+
+/** make the lens hold this side's hidden states, so a reuse call reads the right prompt */
+async function ensureCached(s: Side) {
+  if (!s.res || s.owner !== wllama) throw new Error('The model changed since this run. Run the lens again.');
+  // incremental: only the positions after the prefix the two prompts share run again
+  if (lensCached !== s.input) await lensForward(s.input, true);
+}
+
+/** probability and rank of one word in every cell of one side, by re-projecting its layer outputs */
+async function projectWord(s: Side, id: number): Promise<WordShade> {
+  await ensureCached(s);
+  const r = await wllama.logitLens({ prompt: '', reuse: true, k: 1, targetIds: [id] });
+  return { id, probs: r.targetProbs, ranks: r.targetRanks };
+}
+
+/** the shown sides, the one the lens holds first, so at most one forward pass runs again */
+const cachedFirst = () => shown().sort((x, y) => Number(y.input === lensCached) - Number(x.input === lensCached));
+
 async function run(continuing = false): Promise<boolean> {
   if (busy) return false;
   if (!wllama.isModelLoaded()) {
     needModel();
     return false;
   }
-  const prevTokens = res?.tokens ?? [];
+  const compare = useCompare.checked;
+  if (compare && !promptB.value.trim()) {
+    runStatus.textContent = 'Type a second prompt to compare with, or turn the comparison off.';
+    promptB.focus();
+    return false;
+  }
+  const prevTokens = A.res?.tokens ?? [];
   setBusy(true);
-  const stop = ticker(runStatus, () => 'Running');
+  const stop = ticker(runStatus, () => (compare ? 'Running both prompts' : 'Running'));
   try {
     let ms: number;
+    // computed first and shown together, so a failure halfway never pairs a new grid with an old one
+    const out: { s: Side; prompt: string; input: string; res: LogitLensResult; word: WordShade | null; contrast: WordShade | null }[] = [];
     try {
-      lastInput = lensInput();
-      // continuing: the lens runs only the new tokens if the old ones are unchanged
-      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing });
+      for (const s of compare ? [A, B] : [A]) {
+        const prompt = s === A ? promptEl.value : promptB.value;
+        const input = lensInput(prompt);
+        // continuing: the lens runs only the new tokens if the old ones are unchanged; B runs only what it does not share with A
+        const res = await lensForward(input, continuing || s === B);
+        const reuse = (id: number | null) => (id === null ? null : wllama.logitLens({ prompt: '', reuse: true, k: 1, targetIds: [id] }).then((r) => ({ id, probs: r.targetProbs, ranks: r.targetRanks })));
+        // the chosen words, while the lens still holds this prompt
+        out.push({ s, prompt, input, res, word: await reuse(shadeId), contrast: await reuse(contrastId) });
+      }
     } finally {
       ms = stop();
     }
-    heatmap.setResult(res);
+    if (!compare) Object.assign(B, { res: null, word: null, contrast: null });
+    for (const o of out) Object.assign(o.s, { prompt: o.prompt, input: o.input, res: o.res, owner: wllama, word: o.word, contrast: o.contrast });
+    lastInput = A.input;
+    syncResults();
     selected = null;
+    traced = null;
     traceEl.hidden = true;
     resultEl.hidden = false;
     emptyEl.hidden = true;
     runStatus.textContent = idleHint && 'Ctrl+Enter runs the lens again.';
-    renderTimings(res, ms);
+    renderTimings(out.map((o) => o.res), ms);
     updateUrl();
     await document.fonts.load('500 condensed 12px "Martian Mono Variable"').catch(() => {});
-    await refreshWordShades();
     // re-tokenizing the extended prompt can change the last old token too, so animate from the first difference
+    const res = A.res!;
     let same = 0;
     while (continuing && same < prevTokens.length && same < res.nTokens && prevTokens[same] === res.tokens[same]) same++;
     render(true, Math.min(same, res.nTokens - 1));
@@ -574,9 +674,34 @@ async function run(continuing = false): Promise<boolean> {
   }
 }
 
+/** after the results or the mode changed: pieces, shared scales, column alignment, word shades */
+function syncResults() {
+  syncPieces();
+  const sides = shown();
+  for (const s of [A, B]) if (s.res) s.heatmap.setResult(s.res);
+  // one color scale for both grids
+  const max = (f: (r: LogitLensResult) => Float32Array) => Math.max(...sides.map((s) => f(s.res!).reduce((a, x) => Math.max(a, x), 0))) || 1;
+  const maxEntropy = max((r) => r.entropy);
+  const maxKl = max((r) => r.kl);
+  // columns line up by position; the marker starts at the first token that differs
+  const a = A.res!.tokens;
+  const b = B.res?.tokens ?? [];
+  let d = 0;
+  while (d < a.length && d < b.length && a[d] === b[d]) d++;
+  const cmp = sides.length === 2;
+  for (const s of sides) {
+    s.heatmap.maxEntropy = maxEntropy;
+    s.heatmap.maxKl = maxKl;
+    s.heatmap.cols = cmp ? Math.max(a.length, b.length) : 0;
+    s.heatmap.diffFrom = cmp && (d < a.length || d < b.length) ? d : null;
+  }
+  applyWordShades();
+}
+
 /** append the final layer's top prediction at the last position and run again, n times */
 async function continueRun(n: number) {
-  for (let i = 0; i < n && res; i++) {
+  for (let i = 0; i < n && A.res && !useCompare.checked; i++) {
+    const res = A.res;
     const id = res.topIds[((res.nLayers - 1) * res.nTokens + res.nTokens - 1) * res.k];
     if (wllama.isTokenEOG(id)) {
       runStatus.textContent = chatOn() ? 'The model predicts the end of its reply here.' : 'The model predicts the end of the text here.';
@@ -618,37 +743,58 @@ btnCopyLink.onclick = async () => {
   }
 };
 
-btnExportJson.onclick = () => {
-  if (!res) return;
-  const r = res;
-  const piece = (id: number) => r.pieces.get(id) ?? '';
+/** cells of one result for the JSON export */
+function exportLayers(r: LogitLensResult) {
+  const p = (id: number) => pieces.get(id) ?? '';
   const layers = [];
   for (let l = 0; l < r.nLayers; l++) {
     const cells = [];
     for (let t = 0; t < r.nTokens; t++) {
       const c = l * r.nTokens + t;
       const top = [];
-      for (let j = 0; j < r.k; j++) top.push({ token: piece(r.topIds[c * r.k + j]), id: r.topIds[c * r.k + j], prob: r.topProbs[c * r.k + j] });
-      cells.push({ top, entropy: r.entropy[c], kl: r.kl[c], target: { token: piece(r.targetIds[c]), id: r.targetIds[c], prob: r.targetProbs[c], rank: r.targetRanks[c] } });
+      for (let j = 0; j < r.k; j++) top.push({ token: p(r.topIds[c * r.k + j]), id: r.topIds[c * r.k + j], prob: r.topProbs[c * r.k + j] });
+      cells.push({ top, entropy: r.entropy[c], kl: r.kl[c], target: { token: p(r.targetIds[c]), id: r.targetIds[c], prob: r.targetProbs[c], rank: r.targetRanks[c] } });
     }
     layers.push({ layer: layerLabel(l), cells });
   }
+  return { tokens: r.tokens.map((id) => ({ token: p(id), id })), layers };
+}
+
+btnExportJson.onclick = () => {
+  if (!A.res) return;
+  const chat = chatOn() && { chat: true, ...(!comparing() && { reply }), input: A.input };
   const data = {
     model: loadedUrl ?? 'local file',
-    prompt: promptEl.value,
-    ...(chatOn() && { chat: true, reply, input: lastInput }),
-    tokens: r.tokens.map((id) => ({ token: piece(id), id })),
+    prompt: A.prompt,
+    ...chat,
+    ...exportLayers(A.res),
+    // compare mode: the second prompt, same layout
+    ...(comparing() && { second: { prompt: B.prompt, ...(chatOn() && { input: B.input }), ...exportLayers(B.res!) } }),
     note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1); entropy and kl in nats, kl = KL(final layer || this layer) at the same position',
-    layers,
   };
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
 };
 
 btnExportPng.onclick = () => {
-  if (!res) return;
+  if (!A.res) return;
   // draw without the selection outline, then restore the on-screen state
-  heatmap.draw({ mode: colorMode(), selected: null });
-  heatmap.composite().toBlob((blob) => {
+  const sides = shown();
+  for (const s of sides) s.heatmap.draw({ mode: colorMode(), selected: null });
+  const parts = sides.map((s) => s.heatmap.composite());
+  // compare mode: the two grids stacked, with a gap
+  const gap = parts.length > 1 ? Math.round(16 * (parts[0].height / A.canvas.offsetHeight || 1)) : 0;
+  const out = document.createElement('canvas');
+  out.width = Math.max(...parts.map((c) => c.width));
+  out.height = parts.reduce((a, c) => a + c.height, 0) + gap * (parts.length - 1);
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim();
+  ctx.fillRect(0, 0, out.width, out.height);
+  let y = 0;
+  for (const c of parts) {
+    ctx.drawImage(c, 0, y);
+    y += c.height + gap;
+  }
+  out.toBlob((blob) => {
     if (blob) download(blob, `${fileStem()}.png`);
     render();
   }, 'image/png');
@@ -656,41 +802,49 @@ btnExportPng.onclick = () => {
 
 const fmtTimes = (x: number) => (x >= 1e4 ? `${Math.round(x / 1000)}k` : x >= 100 ? String(Math.round(x)) : x.toFixed(x >= 10 ? 0 : 1));
 
-/** probability and rank of one word in every cell, by re-projecting the cached layer outputs */
-async function projectWord(id: number): Promise<WordShade> {
-  const r = await wllama.logitLens({ prompt: '', reuse: true, k: 1, targetIds: [id] });
-  return { id, probs: r.targetProbs, ranks: r.targetRanks };
-}
-
 function applyWordShades() {
-  heatmap.wordProbs = shadeWord?.probs ?? null;
-  if (shadeWord && contrastWord) {
-    const a = shadeWord.probs;
-    const b = contrastWord.probs;
-    const d = new Float32Array(a.length);
-    for (let i = 0; i < a.length; i++) d[i] = Math.log(Math.max(a[i], 1e-30)) - Math.log(Math.max(b[i], 1e-30));
-    heatmap.setContrast(d);
-  } else heatmap.setContrast(null);
-  wordRadio.disabled = !shadeWord;
-  contrastRadio.disabled = !(shadeWord && contrastWord);
+  const sides = shown();
+  for (const s of sides) {
+    s.heatmap.wordProbs = s.word?.probs ?? null;
+    if (s.word && s.contrast) {
+      const a = s.word.probs;
+      const b = s.contrast.probs;
+      const d = new Float32Array(a.length);
+      for (let i = 0; i < a.length; i++) d[i] = Math.log(Math.max(a[i], 1e-30)) - Math.log(Math.max(b[i], 1e-30));
+      s.heatmap.setContrast(d);
+    } else s.heatmap.setContrast(null);
+  }
+  // one scale for both grids
+  const diffMax = Math.max(...sides.map((s) => s.heatmap.diffMax));
+  for (const s of sides) s.heatmap.diffMax = diffMax;
+  wordRadio.disabled = !sides.every((s) => s.word);
+  contrastRadio.disabled = !sides.every((s) => s.word && s.contrast);
   if ((colorMode() === 'word' && wordRadio.disabled) || (colorMode() === 'contrast' && contrastRadio.disabled)) {
     document.querySelector<HTMLInputElement>('input[name=color][value=prob]')!.checked = true;
   }
 }
 
+/** shade every grid on screen by a word; in compare mode it is projected for each prompt */
 async function chooseWord(kind: 'word' | 'contrast', id: number) {
-  if (busy || !res) return;
+  if (busy || !A.res) return;
   setBusy(true);
   try {
-    const w = await projectWord(id);
+    const got = new Map<Side, WordShade>();
+    for (const s of cachedFirst()) got.set(s, await projectWord(s, id));
+    for (const [s, w] of got) {
+      if (kind === 'word') {
+        s.word = w;
+        if (contrastId === id) s.contrast = null;
+      } else s.contrast = w;
+    }
     if (kind === 'word') {
-      shadeWord = w;
-      if (contrastWord?.id === id) contrastWord = null;
-    } else contrastWord = w;
+      shadeId = id;
+      if (contrastId === id) contrastId = null;
+    } else contrastId = id;
     applyWordShades();
     (kind === 'word' ? wordRadio : contrastRadio).checked = true;
     render();
-    if (tracedPos !== null) trace(tracedPos);
+    if (traced) trace(traced.side, traced.pos);
   } catch (e) {
     runStatus.textContent = `Something went wrong: ${(e as Error).message}`;
   } finally {
@@ -698,69 +852,103 @@ async function chooseWord(kind: 'word' | 'contrast', id: number) {
   }
 }
 
-/** after a new run the cached layer outputs changed, so recompute the chosen words */
-async function refreshWordShades() {
-  if (shadeWord) shadeWord = await projectWord(shadeWord.id);
-  if (contrastWord) contrastWord = await projectWord(contrastWord.id);
-  applyWordShades();
-}
-
 /** one plain-language sentence about the last position: final guess, confidence, where it settles */
 function renderSummary() {
-  const r = res!;
+  if (comparing()) return renderPairSummary();
+  const r = A.res!;
   const t = r.nTokens - 1;
   const top = (l: number) => r.topIds[(l * r.nTokens + t) * r.k];
-  const word = (id: number) => `\u201c<span class="tok">${esc(showPiece(r.pieces.get(id)).trim() || showPiece(r.pieces.get(id)))}</span>\u201d`;
   const fin = top(r.nLayers - 1);
   const prob = r.topProbs[((r.nLayers - 1) * r.nTokens + t) * r.k];
-  const after = `After ${word(r.tokens[t])}`;
+  const after = `After ${quote(r.tokens[t])}`;
   if (wllama.isTokenEOG(fin)) {
     summaryEl.innerHTML = `${after}, the model would most likely end the text here (${pct(prob)}).`;
     return;
   }
-  let text = `${after}, the model's final guess is ${word(fin)} (${pct(prob)}).`;
+  let text = `${after}, the model's final guess is ${quote(fin)} (${pct(prob)}).`;
   // from the top predictions, not the emergence line, which follows the traced token
   let settle = r.nLayers - 1;
   while (settle > 0 && top(settle - 1) === fin) settle--;
   let first = 0;
   while (first < r.nLayers && top(first) !== fin) first++;
-  const name = (l: number) => (l === 0 ? 'the input row' : `layer ${layerLabel(l)}`);
   if (settle === r.nLayers - 1)
-    text += first < settle ? ` It first shows up at ${name(first)}, but only the last layer commits to it.` : ' Only the last layer arrives at it; the layers below predict other words.';
+    text += first < settle ? ` It first shows up at ${layerName(first)}, but only the last layer commits to it.` : ' Only the last layer arrives at it; the layers below predict other words.';
   else if (settle === 0) text += ' Even the input row already points to it.';
-  else text += ` It settles on this answer from ${name(settle)} upward${first < settle ? `, after first showing up at ${name(first)}` : ''}.`;
+  else text += ` It settles on this answer from ${layerName(settle)} upward${first < settle ? `, after first showing up at ${layerName(first)}` : ''}.`;
   if (prob < 0.2) text += ' The model is unsure, though: other words are almost as likely.';
   summaryEl.innerHTML = text;
 }
 
+const layerName = (l: number) => (l === 0 ? 'the input row' : `layer ${layerLabel(l)}`);
+
+/** compare mode: the two final guesses, and in which layers the last columns differ */
+function renderPairSummary() {
+  const [a, b] = [A.res!, B.res!];
+  const top = (r: LogitLensResult, l: number) => r.topIds[(l * r.nTokens + r.nTokens - 1) * r.k];
+  const prob = (r: LogitLensResult) => r.topProbs[((r.nLayers - 1) * r.nTokens + r.nTokens - 1) * r.k];
+  const guess = (r: LogitLensResult) => (wllama.isTokenEOG(top(r, r.nLayers - 1)) ? 'the end of the text' : quote(top(r, r.nLayers - 1)));
+  const n = a.nLayers;
+  const fa = top(a, n - 1);
+  const fb = top(b, n - 1);
+  let text =
+    fa === fb
+      ? `Both prompts end on the same final guess, ${guess(a)} (${pct(prob(a))} after ${quote(a.tokens[a.nTokens - 1])} in A, ${pct(prob(b))} after ${quote(b.tokens[b.nTokens - 1])} in B).`
+      : `After ${quote(a.tokens[a.nTokens - 1])} in A, the final guess is ${guess(a)} (${pct(prob(a))}); after ${quote(b.tokens[b.nTokens - 1])} in B, it is ${guess(b)} (${pct(prob(b))}).`;
+  // top words of the two last columns, layer by layer
+  const differ = Array.from({ length: n }, (_, l) => top(a, l) !== top(b, l));
+  const count = differ.filter(Boolean).length;
+  const first = differ.indexOf(true);
+  let tail = n - 1; // lowest layer from which all layers above agree (fa === fb) or differ (fa !== fb)
+  while (tail > 0 && differ[tail - 1] === differ[n - 1]) tail--;
+  if (count === 0) text += ' Their last columns predict the same word in every layer.';
+  else if (fa !== fb) text += tail === first ? ` Their last columns differ from ${layerName(tail)} upward.` : ` Their last columns first differ at ${layerName(first)}, and for good from ${layerName(tail)} upward.`;
+  else text += ` Their last columns differ in ${count} of ${n} layers, first at ${layerName(first)}, and agree from ${layerName(tail)} upward.`;
+  summaryEl.innerHTML = text;
+}
+
 function render(animate = false, fromCol = 0) {
-  if (!res) return;
+  if (!A.res) return;
+  const sides = shown();
+  const cmp = sides.length === 2;
   renderSummary();
   const mode = colorMode();
-  const q = (w: WordShade | null) => `\u201c<span class="tok">${esc(w ? showPiece(res!.pieces.get(w.id)).trim() || showPiece(res!.pieces.get(w.id)) : '')}</span>\u201d`;
-  if (mode === 'word' && shadeWord) {
-    legend.innerHTML = `<span class="item"><span>Probability of ${q(shadeWord)}</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span></span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
-  } else if (mode === 'contrast' && shadeWord && contrastWord) {
-    const n = fmtTimes(Math.exp(heatmap.diffMax));
-    legend.innerHTML = `<span class="item ends"><span>${q(contrastWord)} ${n}\u00d7 more likely</span><span class="bar" style="background:${divergingGradientCss()}"></span><span>${q(shadeWord)} ${n}\u00d7 more likely</span></span><span class="item"><span>gray: equally likely</span></span>`;
+  const q = (id: number | null) => (id === null ? '' : quote(id));
+  if (mode === 'word' && shadeId !== null) {
+    legend.innerHTML = `<span class="item"><span>Probability of ${q(shadeId)}</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span></span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+  } else if (mode === 'contrast' && shadeId !== null && contrastId !== null) {
+    const n = fmtTimes(Math.exp(A.heatmap.diffMax));
+    legend.innerHTML = `<span class="item ends"><span>${q(contrastId)} ${n}× more likely</span><span class="bar" style="background:${divergingGradientCss()}"></span><span>${q(shadeId)} ${n}× more likely</span></span><span class="item"><span>gray: equally likely</span></span>`;
   }
   const scale =
     mode === 'prob'
       ? `<span>How sure the top word is (probability) ${info('probability')}</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span>`
       : mode === 'entropy'
-        ? `<span>How spread out the guesses are (entropy) ${info('entropy')}</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`
-        : `<span>Difference from the final layer (KL) ${info('kl')}</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
+        ? `<span>How spread out the guesses are (entropy) ${info('entropy')}</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${A.heatmap.maxEntropy.toFixed(1)} nats</span>`
+        : `<span>Difference from the final layer (KL) ${info('kl')}</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${A.heatmap.maxKl.toFixed(1)} nats</span>`;
   if (mode === 'prob' || mode === 'entropy' || mode === 'kl') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+  if (cmp && A.heatmap.diffFrom !== null) legend.innerHTML += `<span class="item"><span class="diffmark"></span><span>From here on, the prompts differ</span></span>`;
+  // captions name the prompt each grid belongs to, as it was run
+  const cap = (s: Side) => `<b>${s.name}</b><span class="tok">${esc(s.prompt)}</span>`;
+  capA.hidden = capB.hidden = rowB.hidden = !cmp;
+  if (cmp) {
+    capA.innerHTML = cap(A);
+    capB.innerHTML = cap(B);
+  }
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
-  if (table) renderTable();
-  else if (animate) heatmap.reveal({ mode, selected }, fromCol);
-  else heatmap.draw({ mode, selected });
+  if (table) {
+    tableWrap.innerHTML = sides.map((s) => (cmp ? `<p class="hm-cap">${cap(s)}</p>` : '') + tableHtml(s.res!)).join('');
+    return;
+  }
+  for (const s of sides) {
+    const opts = { mode, selected: selected?.side === s ? selected : null };
+    if (animate) s.heatmap.reveal(opts, fromCol);
+    else s.heatmap.draw(opts);
+  }
 }
 
-function renderTable() {
-  const r = res!;
+function tableHtml(r: LogitLensResult): string {
   let html = '<table class="lens-table"><thead><tr><th scope="col">Layer</th>';
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
   html += '</tr></thead><tbody>';
@@ -772,33 +960,38 @@ function renderTable() {
     }
     html += '</tr>';
   }
-  tableWrap.innerHTML = html + '</tbody></table>';
+  return html + '</tbody></table>';
 }
 
-function wordLines(cell: number): string {
-  let s = '';
+function wordLines(s: Side, cell: number): string {
+  let out = '';
   const w = (x: WordShade) => `<span class="tok">${esc(piece(x.id))}</span>`;
-  if (shadeWord) s += `<br>${w(shadeWord)}: rank ${shadeWord.ranks[cell] + 1}, ${pct(shadeWord.probs[cell])}`;
-  if (shadeWord && contrastWord) {
-    const d = Math.log(Math.max(shadeWord.probs[cell], 1e-30)) - Math.log(Math.max(contrastWord.probs[cell], 1e-30));
-    const [hi, lo] = d >= 0 ? [shadeWord, contrastWord] : [contrastWord, shadeWord];
-    s += `<br>${w(hi)} is ${fmtTimes(Math.exp(Math.abs(d)))}\u00d7 more likely than ${w(lo)}`;
+  if (s.word) out += `<br>${w(s.word)}: rank ${s.word.ranks[cell] + 1}, ${pct(s.word.probs[cell])}`;
+  if (s.word && s.contrast) {
+    const d = Math.log(Math.max(s.word.probs[cell], 1e-30)) - Math.log(Math.max(s.contrast.probs[cell], 1e-30));
+    const [hi, lo] = d >= 0 ? [s.word, s.contrast] : [s.contrast, s.word];
+    out += `<br>${w(hi)} is ${fmtTimes(Math.exp(Math.abs(d)))}× more likely than ${w(lo)}`;
   }
-  return s;
+  return out;
 }
 
-function showTooltip(layer: number, pos: number, x: number, y: number) {
-  const r = res!;
+function showTooltip(s: Side, layer: number, pos: number, x: number, y: number) {
+  const r = s.res!;
   const cell = layer * r.nTokens + pos;
   let rows = '';
   for (let j = 0; j < r.k; j++) {
     const i = cell * r.k + j;
     rows += `<tr><td class="tok">${esc(piece(r.topIds[i]))}</td><td class="num">${pct(r.topProbs[i])}</td></tr>`;
   }
+  // compare mode: the other prompt's top word in the same cell
+  const o = comparing() ? (s === A ? B : A) : null;
+  const other = o && pos < o.res!.nTokens ? o.res! : null;
+  const oc = other ? (layer * other.nTokens + pos) * other.k : 0;
   tooltip.innerHTML =
-    `<div class="tt-head">Layer ${layerLabel(layer)}, after <span class="tok">${esc(piece(r.tokens[pos]))}</span></div>` +
+    `<div class="tt-head">${o ? `${s.name} · ` : ''}Layer ${layerLabel(layer)}, after <span class="tok">${esc(piece(r.tokens[pos]))}</span></div>` +
     `<table>${rows}</table>` +
-    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats, KL to final layer ${r.kl[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(cell)}</div>`;
+    `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats, KL to final layer ${r.kl[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(s, cell)}` +
+    `${other ? `<br>Prompt ${o!.name} here, after <span class="tok">${esc(piece(other.tokens[pos]))}</span>: <span class="tok">${esc(piece(other.topIds[oc]))}</span> ${pct(other.topProbs[oc])}` : ''}</div>`;
   tooltip.hidden = false;
   const tw = tooltip.offsetWidth;
   const th = tooltip.offsetHeight;
@@ -806,9 +999,9 @@ function showTooltip(layer: number, pos: number, x: number, y: number) {
   tooltip.style.top = `${y + th + 24 > window.innerHeight ? y - th - 14 : y + 14}px`;
 }
 
-function trace(pos: number) {
-  const r = res!;
-  tracedPos = pos;
+function trace(s: Side, pos: number) {
+  const r = s.res!;
+  traced = { side: s, pos };
   traceEl.hidden = false;
   const pts: TracePoint[] = [];
   for (let l = 0; l < r.nLayers; l++) {
@@ -816,10 +1009,11 @@ function trace(pos: number) {
     pts.push({ layer: l, rank: r.targetRanks[cell], prob: r.targetProbs[cell] });
   }
   const target = r.targetIds[pos];
-  traceDesc.innerHTML = `Where <span class="tok">${esc(piece(target))}</span> ranks among each layer's guesses after <span class="tok">${esc(piece(r.tokens[pos]))}</span> (position ${pos}); rank 1 is the top guess. Pick another word to follow, from the final layer or the selected cell:`;
+  const where = comparing() ? ` in prompt ${s.name}` : '';
+  traceDesc.innerHTML = `Where <span class="tok">${esc(piece(target))}</span> ranks among each layer's guesses after <span class="tok">${esc(piece(r.tokens[pos]))}</span> (position ${pos}${where}); rank 1 is the top guess. Pick another word to follow, from the final layer or the selected cell:`;
   const last = (r.nLayers - 1) * r.nTokens + pos;
   const cands = Array.from(r.topIds.slice(last * r.k, last * r.k + r.k));
-  if (selected) {
+  if (selected?.side === s) {
     const top = r.topIds[(selected.layer * r.nTokens + pos) * r.k];
     if (!cands.includes(top)) cands.push(top);
   }
@@ -830,13 +1024,13 @@ function trace(pos: number) {
       b.className = 'tok';
       b.textContent = piece(id);
       b.setAttribute('aria-pressed', String(id === target));
-      b.onclick = () => retarget(pos, id);
+      b.onclick = () => retarget(s, pos, id);
       return b;
     })
   );
   drawTrace(tracePlot, pts, tooltip, piece(target));
 
-  const quoted = (id: number) => `\u201c${showPiece(r.pieces.get(id)).trim() || showPiece(r.pieces.get(id))}\u201d`;
+  const quoted = (id: number) => `“${showPiece(pieces.get(id)).trim() || piece(id)}”`;
   const actions: HTMLButtonElement[] = [];
   const action = (text: string, fn: () => void) => {
     const b = document.createElement('button');
@@ -846,26 +1040,29 @@ function trace(pos: number) {
     b.onclick = fn;
     actions.push(b);
   };
-  if (shadeWord?.id !== target) action(`Shade the whole grid by ${quoted(target)}`, () => chooseWord('word', target));
-  if (shadeWord && shadeWord.id !== target && contrastWord?.id !== target) action(`Compare ${quoted(shadeWord.id)} with ${quoted(target)}`, () => chooseWord('contrast', target));
+  const grid = comparing() ? 'both grids' : 'the whole grid';
+  if (shadeId !== target) action(`Shade ${grid} by ${quoted(target)}`, () => chooseWord('word', target));
+  if (shadeId !== null && shadeId !== target && contrastId !== target) action(`Compare ${quoted(shadeId)} with ${quoted(target)}`, () => chooseWord('contrast', target));
   traceActions.replaceChildren(...actions);
 }
 
-async function retarget(pos: number, id: number) {
-  if (busy || !res) return;
+async function retarget(s: Side, pos: number, id: number) {
+  if (busy || !s.res) return;
   setBusy(true);
   try {
-    const targets = Array.from(res.targetIds.slice(0, res.nTokens));
+    const old = s.res;
+    const targets = Array.from(old.targetIds.slice(0, old.nTokens));
     targets[pos] = id;
-    const { pieces, kl } = res;
     const t0 = performance.now();
-    res = await wllama.logitLens({ prompt: '', reuse: true, k: res.k, targetIds: targets });
-    res.kl = kl; // reuse with targets skips KL, it does not depend on them
-    renderTimings(res, performance.now() - t0);
-    for (const [k, v] of pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
-    heatmap.setResult(res);
+    await ensureCached(s);
+    const res = await wllama.logitLens({ prompt: '', reuse: true, k: old.k, targetIds: targets });
+    res.kl = old.kl; // reuse with targets skips KL, it does not depend on them
+    renderTimings([res], performance.now() - t0);
+    for (const [k, v] of old.pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
+    s.res = res;
+    syncResults();
     render();
-    trace(pos);
+    trace(s, pos);
   } catch (e) {
     runStatus.textContent = `Something went wrong: ${(e as Error).message}`;
   } finally {
@@ -873,28 +1070,54 @@ async function retarget(pos: number, id: number) {
   }
 }
 
-canvas.addEventListener('pointermove', (ev) => {
-  const h = heatmap.hit(ev.clientX, ev.clientY);
-  if (h) showTooltip(h.layer, h.pos, ev.clientX, ev.clientY);
-  else tooltip.hidden = true;
-});
-canvas.addEventListener('pointerleave', () => (tooltip.hidden = true));
-// touch has no hover, so a tap also shows the cell's top 5
-let lastPointer = 'mouse';
-canvas.addEventListener('pointerdown', (ev) => (lastPointer = ev.pointerType));
-canvas.addEventListener('click', (ev) => {
-  const h = heatmap.hit(ev.clientX, ev.clientY);
-  if (!h) return;
-  selected = h;
-  render();
-  trace(h.pos);
-  if (lastPointer !== 'mouse') {
-    showTooltip(h.layer, h.pos, ev.clientX, ev.clientY);
-    tapScroll = [scrollX, scrollY, heatmapWrap.scrollLeft];
-  }
-});
 // a tapped tooltip goes away on a real scroll or on a tap anywhere else; opening the trace panel can nudge the scroll position by a few pixels, which must not count
 let tapScroll = [0, 0, 0];
+// touch has no hover, so a tap also shows the cell's top 5
+let lastPointer = 'mouse';
+for (const s of [A, B]) {
+  const { canvas, heatmap } = s;
+  canvas.addEventListener('pointermove', (ev) => {
+    const h = s.res && heatmap.hit(ev.clientX, ev.clientY);
+    if (h) showTooltip(s, h.layer, h.pos, ev.clientX, ev.clientY);
+    else tooltip.hidden = true;
+  });
+  canvas.addEventListener('pointerleave', () => (tooltip.hidden = true));
+  canvas.addEventListener('pointerdown', (ev) => (lastPointer = ev.pointerType));
+  canvas.addEventListener('click', (ev) => {
+    const h = s.res && heatmap.hit(ev.clientX, ev.clientY);
+    if (!h) return;
+    selected = { side: s, ...h };
+    render();
+    trace(s, h.pos);
+    if (lastPointer !== 'mouse') {
+      showTooltip(s, h.layer, h.pos, ev.clientX, ev.clientY);
+      tapScroll = [scrollX, scrollY, heatmapWrap.scrollLeft];
+    }
+  });
+  canvas.addEventListener('keydown', (ev) => {
+    const res = s.res;
+    if (!res) return;
+    const cur = selected?.side === s ? selected : { layer: res.nLayers - 1, pos: 0 };
+    const moves: Record<string, [number, number]> = { ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (ev.key in moves) {
+      ev.preventDefault();
+      const [dl, dp] = moves[ev.key];
+      selected = {
+        side: s,
+        layer: Math.max(0, Math.min(res.nLayers - 1, cur.layer + dl)),
+        pos: Math.max(0, Math.min(res.nTokens - 1, cur.pos + dp)),
+      };
+      render();
+      const rect = canvas.getBoundingClientRect();
+      showTooltip(s, selected.layer, selected.pos, rect.left + LEFT + (selected.pos + 0.5) * CELL_W, rect.top + TOP + (res.nLayers - selected.layer) * CELL_H);
+    } else if (ev.key === 'Enter' && selected?.side === s) {
+      trace(s, selected.pos);
+    } else if (ev.key === 'Escape') {
+      tooltip.hidden = true;
+    }
+  });
+  canvas.addEventListener('blur', () => (tooltip.hidden = true));
+}
 const hideOnScroll = () => {
   const [x, y, l] = tapScroll;
   if (Math.abs(scrollX - x) + Math.abs(scrollY - y) + Math.abs(heatmapWrap.scrollLeft - l) > 40) tooltip.hidden = true;
@@ -903,29 +1126,8 @@ const hideTooltip = () => (tooltip.hidden = true);
 window.addEventListener('scroll', hideOnScroll, { passive: true });
 heatmapWrap.addEventListener('scroll', hideOnScroll, { passive: true });
 document.addEventListener('pointerdown', (ev) => {
-  if (ev.target !== canvas) hideTooltip();
+  if (ev.target !== A.canvas && ev.target !== B.canvas) hideTooltip();
 });
-canvas.addEventListener('keydown', (ev) => {
-  if (!res) return;
-  const s = selected ?? { layer: res.nLayers - 1, pos: 0 };
-  const moves: Record<string, [number, number]> = { ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
-  if (ev.key in moves) {
-    ev.preventDefault();
-    const [dl, dp] = moves[ev.key];
-    selected = {
-      layer: Math.max(0, Math.min(res.nLayers - 1, s.layer + dl)),
-      pos: Math.max(0, Math.min(res.nTokens - 1, s.pos + dp)),
-    };
-    render();
-    const rect = canvas.getBoundingClientRect();
-    showTooltip(selected.layer, selected.pos, rect.left + LEFT + (selected.pos + 0.5) * CELL_W, rect.top + TOP + (res.nLayers - selected.layer) * CELL_H);
-  } else if (ev.key === 'Enter' && selected) {
-    trace(selected.pos);
-  } else if (ev.key === 'Escape') {
-    tooltip.hidden = true;
-  }
-});
-canvas.addEventListener('blur', () => (tooltip.hidden = true));
 
 btnLoad.onclick = btnLoadEmpty.onclick = () => {
   if (!selectedUrl) return;
@@ -973,8 +1175,45 @@ useChat.onchange = () => {
   reply = '';
   syncChat();
   updateUrl();
-  if (res && wllama.isModelLoaded()) run();
+  if (A.res && wllama.isModelLoaded()) run();
 };
+
+function syncCompare() {
+  fieldB.hidden = !useCompare.checked;
+  promptsEl.classList.toggle('comparing', useCompare.checked);
+}
+useCompare.onchange = () => setCompare(true);
+/** after the compare box changed; byHand: focus the second prompt to edit it */
+function setCompare(byHand: boolean) {
+  // the second grid is shown again only after a run with both prompts
+  Object.assign(B, { res: null, word: null, contrast: null });
+  if (traced?.side === B) {
+    traced = null;
+    traceEl.hidden = true;
+  }
+  if (selected?.side === B) selected = null;
+  if (useCompare.checked) {
+    // a minimal pair starts from a copy of the first prompt; Continue and its reply are for one prompt
+    if (!promptB.value) promptB.value = promptEl.value;
+    reply = '';
+    if (byHand) {
+      promptB.focus();
+      promptB.setSelectionRange(promptB.value.length, promptB.value.length);
+      runStatus.textContent = 'Edit the second prompt, then run the lens on both.';
+    }
+  } else if (byHand) runStatus.textContent = idleHint;
+  syncCompare();
+  setBusy(busy);
+  updateUrl();
+  if (A.res) {
+    syncResults();
+    render();
+  }
+  if (traced) trace(traced.side, traced.pos);
+}
+promptB.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) run();
+});
 promptEl.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) run();
 });
@@ -982,7 +1221,7 @@ document.querySelectorAll('input[name=color], input[name=view]').forEach((e) => 
 // canvas and svg colors are read at draw time, so redraw on any theme change
 function redrawForTheme() {
   render();
-  if (res && tracedPos !== null && !traceEl.hidden) trace(tracedPos);
+  if (traced && !traceEl.hidden) trace(traced.side, traced.pos);
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redrawForTheme);
 
@@ -1033,16 +1272,27 @@ examplesEl.replaceChildren(
     b.onclick = () => {
       promptEl.value = ex.prompt;
       reply = '';
+      // a pair turns comparison on, a single prompt turns it off
+      if (useCompare.checked !== !!ex.prompt2) {
+        useCompare.checked = !!ex.prompt2;
+        setCompare(false);
+      }
+      if (ex.prompt2) promptB.value = ex.prompt2;
       syncChat();
       examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       exampleNote.textContent = ex.note;
+      updateUrl();
       if (wllama.isModelLoaded()) run();
       else exampleNote.textContent += ' Load a model, then run the lens.';
     };
     return b;
   })
 );
-// editing the prompt by hand leaves the example
+// editing a prompt by hand leaves the example
+promptB.addEventListener('input', () => {
+  examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+  exampleNote.textContent = '';
+});
 promptEl.addEventListener('input', () => {
   // a new user message starts a new reply
   if (reply) {
@@ -1072,7 +1322,11 @@ const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
 // checked but disabled until a model with a chat template is loaded
 useChat.checked = urlParams.get('chat') === '1';
-reply = (useChat.checked && urlParams.get('reply')) || '';
+const prompt2Param = urlParams.get('prompt2');
+useCompare.checked = prompt2Param !== null;
+promptB.value = prompt2Param ?? '';
+syncCompare();
+reply = (useChat.checked && !useCompare.checked && urlParams.get('reply')) || '';
 
 refreshCache().then(async () => {
   await search('');

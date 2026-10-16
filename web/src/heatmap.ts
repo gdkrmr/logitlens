@@ -85,6 +85,9 @@ export class Heatmap {
   // per position: lowest layer from which the top token equals the target all the way up, or null
   emergence: (number | null)[] = [];
   private anim = 0;
+  // compare mode (#11): width in columns, so both grids line up, and the first position that differs from the other prompt
+  cols = 0;
+  diffFrom: number | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -176,7 +179,7 @@ export class Heatmap {
     const r = this.res;
     if (!r) return;
     if (rows === Infinity) cancelAnimationFrame(this.anim);
-    const w = LEFT + r.nTokens * CELL_W + 4;
+    const w = LEFT + Math.max(r.nTokens, this.cols) * CELL_W + 4;
     const h = TOP + r.nLayers * CELL_H + BOTTOM;
     // canvases wider than 32767 device px stay blank; long prompts trade sharpness for that
     const dpr = Math.min(window.devicePixelRatio || 1, 30000 / (w + AXIS_W));
@@ -236,6 +239,15 @@ export class Heatmap {
       ctx.fillStyle = v('--ink-2');
       ctx.fillText(showPiece(r.pieces.get(r.tokens[t])), x + 5, y);
       ctx.restore();
+    }
+
+    // compare mode: a bar under the tokens from the first one that differs, and a rule between the columns there
+    const d = this.diffFrom;
+    if (d !== null && d < r.nTokens) {
+      ctx.fillStyle = v('--ink-2');
+      const x0 = LEFT + d * CELL_W;
+      ctx.fillRect(x0 + 1, TOP + r.nLayers * CELL_H + 26, (r.nTokens - d) * CELL_W - 2, 3);
+      if (d > 0) ctx.fillRect(x0 - 1, TOP, 2, r.nLayers * CELL_H + 29);
     }
 
     // during a reveal the line covers only the complete columns, so it never disappears and comes back

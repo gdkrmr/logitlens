@@ -442,7 +442,7 @@ progress {
   overflow-x: auto;
   max-width: 100%;
 }
-#heatmap {
+.hm-cells {
   display: block;
   cursor: crosshair;
   border-radius: 0 4px 4px 0;
@@ -865,7 +865,7 @@ progress {
   display: flex;
   width: max-content;
 }
-#heatmap-axis {
+.hm-axis {
   display: block;
   border-radius: 4px 0 0 4px;
   position: sticky;
@@ -1193,4 +1193,63 @@ progress {
 }
 .check-row .check {
   margin-top: 0;
+}
+
+/* compare two prompts (#11): a second prompt field, and a caption above each grid */
+.prompts {
+  display: grid;
+  gap: 6px;
+}
+.prompt-field {
+  position: relative;
+}
+.prompt-tag {
+  display: none;
+}
+.prompts.comparing .prompt-tag {
+  display: block;
+  position: absolute;
+  left: 9px;
+  top: 10px;
+  font: 600 11px/1.6 var(--mono);
+  font-stretch: 87.5%;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+.prompts.comparing textarea {
+  padding-left: 26px;
+}
+.scroll-x {
+  /* captions are sized to the visible width, not the scrolled content */
+  container-type: inline-size;
+}
+.hm-cap {
+  position: sticky;
+  left: 0;
+  max-width: 100cqw;
+  width: fit-content;
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.heatmap-row + .hm-cap {
+  margin-top: 14px;
+}
+.hm-cap b {
+  font: 600 11px/1 var(--mono);
+  font-stretch: 87.5%;
+  color: var(--ink-3);
+  margin-right: 6px;
+}
+.legend .diffmark {
+  width: 22px;
+  height: 0;
+  border-top: 3px solid var(--ink-2);
+  border-radius: 2px;
+}
+.lens-table + .hm-cap {
+  margin-top: 16px;
 }

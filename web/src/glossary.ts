@@ -48,6 +48,11 @@ const TERMS: Record<string, { title: string; ask: string; text: string }> = {
     ask: 'What is the chat format?',
     text: 'Chat models are trained on conversations with special markers around each message. With this on, your prompt is wrapped as a user message, and you see how the model starts its reply.',
   },
+  compare: {
+    title: 'Compare',
+    ask: 'What does comparing two prompts show?',
+    text: 'Runs the lens on two prompts, ideally a minimal pair that differs in one word, and shows both grids on the same scale. You see in which layers the difference starts to change the guesses.',
+  },
   webgpu: {
     title: 'WebGPU',
     ask: 'What is WebGPU?',
