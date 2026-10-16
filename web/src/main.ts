@@ -6,7 +6,7 @@ import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, 
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
 import { info, initGlossary } from './glossary';
-import { SUPPORTED_ARCHS, MAX_FILE_BYTES, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
+import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
 
 // shown when the search box is empty
 // hint: download size of the file preselected by pickDefaultFile
@@ -55,6 +55,7 @@ const repoMeta = $<HTMLDivElement>('repo-meta');
 const repoList = $<HTMLDivElement>('repo-list');
 const quantBlock = $<HTMLDivElement>('quant-block');
 const quantList = $<HTMLDivElement>('quant-list');
+const quantNote = $<HTMLParagraphElement>('quant-note');
 const quantRepo = $<HTMLSpanElement>('quant-repo');
 const emptyEl = $<HTMLElement>('empty');
 const timingsEl = $<HTMLElement>('timings');
@@ -198,6 +199,8 @@ function renderRepos() {
       const meta: string[] = [];
       if (r.id === DIRECT_ID) meta.push(directHf ? 'shared link' : 'direct URL');
       if (r.params && r.arch !== 'clip') meta.push(`${fmtParams(r.params)} params`);
+      if (r.id !== DIRECT_ID && tooLargeForBrowser(r.params)) meta.push('too large for the browser');
+      else if (r.id !== DIRECT_ID && onlySmallFilesFit(r.params)) meta.push('large: only small files fit');
       if (r.downloads) meta.push(`${fmtCount(r.downloads)} downloads`);
       if (r.hint) meta.push(r.hint);
       if (repoHasCache(r.id) || (r.id === DIRECT_ID && cachedUrls.has(directUrl!))) meta.push('cached');
@@ -226,14 +229,14 @@ async function search(query: string) {
   try {
     const exactId = /^[\w.-]+\/[\w.-]+$/.test(q);
     const [found, exact] = await Promise.all([searchRepos(q, ctl.signal), exactId ? getRepo(q, ctl.signal) : Promise.resolve(null)]);
-    const usable = found.filter((r) => isSupported(r) && !r.gated);
+    const usable = found.filter((r) => isSupported(r) && !r.gated && !tooLargeForBrowser(r.params));
     // an exact repo id is always listed, the architecture tag can be wrong for repos with projector files
     if (exact && !exact.gated && !usable.some((r) => r.id === exact.id)) usable.unshift(exact);
     shownRepos = usable;
     const hidden = found.length - usable.filter((r) => found.includes(r)).length;
     repoMeta.textContent = usable.length
-      ? `${usable.length} matching ${usable.length === 1 ? 'repo' : 'repos'}${hidden ? `, ${hidden} hidden (unsupported architecture or gated)` : ''}. Supported: ${SUPPORTED_ARCHS.join(', ')}.`
-      : `No supported repos found${hidden ? ` (${hidden} hidden: unsupported architecture or gated)` : ''}. Supported: ${SUPPORTED_ARCHS.join(', ')}.`;
+      ? `${usable.length} matching ${usable.length === 1 ? 'repo' : 'repos'}${hidden ? `, ${hidden} hidden (unsupported architecture, gated or too large)` : ''}. Supported: ${SUPPORTED_ARCHS.join(', ')}.`
+      : `No supported repos found${hidden ? ` (${hidden} hidden: unsupported architecture, gated or too large)` : ''}. Supported: ${SUPPORTED_ARCHS.join(', ')}.`;
     renderRepos();
   } catch (e) {
     if (ctl.signal.aborted) return;
@@ -248,6 +251,7 @@ function setQuantStatus(text: string) {
 async function selectRepo(r: RepoInfo) {
   selectedRepo = r.id;
   selectedUrl = '';
+  quantNote.hidden = true;
   renderRepos();
   filesCtl?.abort();
   const ctl = (filesCtl = new AbortController());
@@ -290,6 +294,11 @@ async function selectRepo(r: RepoInfo) {
         return label;
       })
     );
+    // outside the radiogroup, so screen readers do not read it as part of the group
+    if (!def && r.id !== DIRECT_ID) {
+      quantNote.textContent = `No file in this repo fits in the browser: the smallest is ${fmtBytes(Math.min(...list.map((f) => f.size)))}, the limit is ${fmtBytes(MAX_FILE_BYTES)}. Pick a smaller model.`;
+      quantNote.hidden = false;
+    }
     selectedUrl = def?.url ?? '';
     selectedLabel = quantList.querySelector<HTMLLabelElement>('label:has(input:checked)')?.dataset.label ?? '';
     selectedSize = def?.size ?? NaN;
