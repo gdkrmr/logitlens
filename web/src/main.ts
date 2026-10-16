@@ -54,6 +54,7 @@ const repoMeta = $<HTMLDivElement>('repo-meta');
 const repoList = $<HTMLDivElement>('repo-list');
 const quantBlock = $<HTMLDivElement>('quant-block');
 const quantList = $<HTMLDivElement>('quant-list');
+const quantNote = $<HTMLParagraphElement>('quant-note');
 const quantRepo = $<HTMLSpanElement>('quant-repo');
 const emptyEl = $<HTMLElement>('empty');
 const timingsEl = $<HTMLElement>('timings');
@@ -249,6 +250,7 @@ function setQuantStatus(text: string) {
 async function selectRepo(r: RepoInfo) {
   selectedRepo = r.id;
   selectedUrl = '';
+  quantNote.hidden = true;
   renderRepos();
   filesCtl?.abort();
   const ctl = (filesCtl = new AbortController());
@@ -291,14 +293,10 @@ async function selectRepo(r: RepoInfo) {
         return label;
       })
     );
+    // outside the radiogroup, so screen readers do not read it as part of the group
     if (!def && r.id !== DIRECT_ID) {
-      const smallest = Math.min(...list.map((f) => f.size));
-      quantList.prepend(
-        Object.assign(document.createElement('p'), {
-          className: 'hint',
-          textContent: `No file in this repo fits in the browser: the smallest is ${fmtBytes(smallest)}, the limit is ${fmtBytes(MAX_FILE_BYTES)}. Pick a smaller model.`,
-        })
-      );
+      quantNote.textContent = `No file in this repo fits in the browser: the smallest is ${fmtBytes(Math.min(...list.map((f) => f.size)))}, the limit is ${fmtBytes(MAX_FILE_BYTES)}. Pick a smaller model.`;
+      quantNote.hidden = false;
     }
     selectedUrl = def?.url ?? '';
     selectedLabel = quantList.querySelector<HTMLLabelElement>('label:has(input:checked)')?.dataset.label ?? '';
