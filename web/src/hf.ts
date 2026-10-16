@@ -3,6 +3,9 @@
 export const SUPPORTED_ARCHS = ['llama', 'qwen2', 'qwen3', 'qwen35', 'gemma', 'gemma2', 'gemma3', 'gemma4', 'phi2', 'phi3'];
 // the wasm heap is capped at 4 GB and also holds the KV cache and compute buffers
 export const MAX_FILE_BYTES = 3.5e9;
+// smallest GGUFs seen on the Hub take about 0.26 bytes per parameter (2-bit quants), Q4 files about 0.56
+export const tooLargeForBrowser = (params: number | null) => params !== null && params * 0.25 > MAX_FILE_BYTES;
+export const onlySmallFilesFit = (params: number | null) => params !== null && params * 0.56 > MAX_FILE_BYTES;
 
 const API = 'https://huggingface.co/api';
 
@@ -55,7 +58,7 @@ export async function getRepo(id: string, signal?: AbortSignal): Promise<RepoInf
   return toRepo((await res.json()) as ApiModel);
 }
 
-/** list model GGUF files in a repo; split files are merged into one entry, projector files are skipped */
+/** list model GGUF files in a repo; split files are merged into one entry; projector, imatrix and MTP draft files are skipped */
 export async function listGgufFiles(repo: string, signal?: AbortSignal): Promise<GgufFile[]> {
   const res = await fetch(`${API}/models/${repo}/tree/main?recursive=1`, { signal });
   if (!res.ok) throw new Error(`Could not list files of ${repo} (${res.status})`);
@@ -63,8 +66,9 @@ export async function listGgufFiles(repo: string, signal?: AbortSignal): Promise
   const groups = new Map<string, GgufFile>();
   for (const e of entries) {
     if (e.type !== 'file' || !e.path.toLowerCase().endsWith('.gguf')) continue;
-    const name = e.path.split('/').pop()!.toLowerCase();
-    if (name.includes('mmproj') || name.startsWith('imatrix')) continue;
+    const parts = e.path.toLowerCase().split('/');
+    const name = parts[parts.length - 1];
+    if (name.includes('mmproj') || name.startsWith('imatrix') || name.startsWith('mtp-') || parts.slice(0, -1).includes('mtp')) continue;
     const size = e.lfs?.size ?? e.size;
     const m = /^(.+)-(\d{5})-of-(\d{5})\.gguf$/i.exec(e.path);
     const key = m ? `${m[1]}-of-${m[3]}` : e.path;
