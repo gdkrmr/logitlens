@@ -12,7 +12,7 @@ import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit,
 // hint: download size of the file preselected by pickDefaultFile
 const SUGGESTED: RepoInfo[] = [
   { id: DEFAULT_REPO, arch: 'llama', params: 0.135e9, downloads: 0, gated: false, hint: 'default \u00b7 145 MB' },
-  { id: 'unsloth/Qwen3.5-0.8B-GGUF', arch: 'qwen35', params: 0.75e9, downloads: 0, gated: false, hint: '811 MB' },
+  { id: 'unsloth/Qwen3.5-0.8B-MTP-GGUF', arch: 'qwen35', params: 0.77e9, downloads: 0, gated: false, hint: '834 MB \u00b7 MTP' },
   { id: 'Qwen/Qwen3-0.6B-GGUF', arch: 'qwen3', params: 0.6e9, downloads: 0, gated: false, hint: '639 MB' },
   { id: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', arch: 'qwen2', params: 0.5e9, downloads: 0, gated: false, hint: '676 MB' },
   { id: 'unsloth/Llama-3.2-1B-Instruct-GGUF', arch: 'llama', params: 1.2e9, downloads: 0, gated: false, hint: '807 MB' },
