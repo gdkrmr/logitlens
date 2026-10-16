@@ -151,6 +151,7 @@
               <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
               <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. A stronger blue means more confident.</li>
               <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
+              <li id="howto-mtp" hidden>Some models have an extra <strong>MTP</strong> block <button class="info" data-term="mtp"></button>, shown as the row above the final layer. It guesses two tokens ahead, one position earlier than the layers, but its guess is drawn in the same column as theirs, so every cell in a column guesses the same next token. The first cell is empty.</li>
               <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: a stronger blue means the layer already thinks like the final answer.</li>
               <li>The small <strong>i</strong> markers explain terms; click or tap them.</li>
               <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>

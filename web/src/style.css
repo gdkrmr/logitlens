@@ -438,6 +438,18 @@ progress {
   border-top: 3px solid var(--trace);
   border-radius: 2px;
 }
+/* MTP row key: a cell above a rule, like the row above the final layer */
+.legend .mtp-key {
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--data);
+  box-shadow: 0 4px 0 -2px var(--panel), 0 5px 0 -2px var(--rule);
+}
+.legend .mtp-key.neutral {
+  background: var(--sunk);
+  outline: 1px solid var(--rule);
+}
 .scroll-x {
   overflow-x: auto;
   max-width: 100%;
@@ -495,6 +507,11 @@ progress {
   color: var(--ink-2);
   font-size: 12px;
 }
+.tooltip .tt-only {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
 
 /* table view */
 .lens-table {
@@ -511,6 +528,13 @@ progress {
 .lens-table th {
   font: 600 11px/1.3 var(--mono);
   font-stretch: 87.5%;
+  color: var(--ink-3);
+}
+.lens-table .mtp-row th,
+.lens-table .mtp-row td {
+  border-bottom: 3px double var(--rule);
+}
+.lens-table td.none {
   color: var(--ink-3);
 }
 .lens-table td .p {
