@@ -72,6 +72,8 @@ export const AXIS_W = 40;
 export const LEFT = 2;
 export const TOP = 8;
 const BOTTOM = 30;
+// space between the MTP row and the final layer
+const MTP_GAP = 9;
 const FONT = '"Martian Mono Variable", ui-monospace, monospace';
 
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -94,10 +96,30 @@ export class Heatmap {
     this.axisCtx = axis.getContext('2d')!;
   }
 
+  /** 1 when the model has an MTP (NextN) block: one extra row above the final layer */
+  get mtpRows(): number {
+    return this.res && this.res.nMtp > 0 ? 1 : 0;
+  }
+
+  /** the MTP cell shown for position t: the block output, its last stage */
+  mtpCell(t: number): number {
+    const r = this.res!;
+    return (r.nMtp - 1) * r.nTokens + t;
+  }
+
+  /** top of a row; layer nLayers is the MTP row */
+  rowY(layer: number): number {
+    const r = this.res!;
+    if (layer >= r.nLayers) return TOP;
+    return TOP + this.mtpRows * (CELL_H + MTP_GAP) + (r.nLayers - 1 - layer) * CELL_H;
+  }
+
   setResult(res: LogitLensResult) {
     this.res = res;
     let m = 0;
     for (const h of res.entropy) m = Math.max(m, h);
+    // one entropy scale for the layers and the MTP row
+    for (let t = 0; res.nMtp > 0 && t < res.nTokens; t++) m = Math.max(m, res.mtpEntropy[(res.nMtp - 1) * res.nTokens + t]);
     this.maxEntropy = m || 1;
     m = 0;
     for (const d of res.kl) m = Math.max(m, d);
@@ -140,6 +162,15 @@ export class Heatmap {
     return mode === 'contrast' ? divergingColor(this.value(cell, mode)) : rampColor(this.value(cell, mode));
   }
 
+  /** MTP cells have no KL and no word probabilities, so those modes draw them neutral (null) */
+  mtpColor(t: number, mode: ColorMode): { fill: string; ink: string } | null {
+    const r = this.res!;
+    const c = this.mtpCell(t);
+    if (mode === 'prob') return rampColor(r.mtpTopProbs[c * r.k]);
+    if (mode === 'entropy') return rampColor(r.mtpEntropy[c] / this.maxEntropy);
+    return null;
+  }
+
   /** map pointer position to (layer, pos) */
   hit(clientX: number, clientY: number): { layer: number; pos: number } | null {
     const r = this.res;
@@ -148,8 +179,13 @@ export class Heatmap {
     const x = clientX - rect.left - LEFT;
     const y = clientY - rect.top - TOP;
     const pos = Math.floor(x / CELL_W);
-    const layer = r.nLayers - 1 - Math.floor(y / CELL_H);
-    if (x < 0 || y < 0 || pos >= r.nTokens || layer < 0 || layer >= r.nLayers) return null;
+    if (x < 0 || y < 0 || pos >= r.nTokens) return null;
+    if (this.mtpRows) {
+      if (y < CELL_H) return { layer: r.nLayers, pos };
+      if (y < CELL_H + MTP_GAP) return null;
+    }
+    const layer = r.nLayers - 1 - Math.floor((y - this.mtpRows * (CELL_H + MTP_GAP)) / CELL_H);
+    if (layer < 0 || layer >= r.nLayers) return null;
     return { layer, pos };
   }
 
@@ -162,11 +198,12 @@ export class Heatmap {
     cancelAnimationFrame(this.anim);
     const r = this.res;
     if (!r || reducedMotion()) return this.draw(opts);
-    const dur = 140 + r.nLayers * 14;
+    const n = r.nLayers + this.mtpRows;
+    const dur = 140 + n * 14;
     const t0 = performance.now();
     const step = (now: number) => {
       const p = Math.min(1, (now - t0) / dur);
-      this.draw(opts, p * r.nLayers, fromCol);
+      this.draw(opts, p * n, fromCol);
       if (p < 1) this.anim = requestAnimationFrame(step);
     };
     this.anim = requestAnimationFrame(step);
@@ -177,7 +214,7 @@ export class Heatmap {
     if (!r) return;
     if (rows === Infinity) cancelAnimationFrame(this.anim);
     const w = LEFT + r.nTokens * CELL_W + 4;
-    const h = TOP + r.nLayers * CELL_H + BOTTOM;
+    const h = this.rowY(0) + CELL_H + BOTTOM;
     // canvases wider than 32767 device px stay blank; long prompts trade sharpness for that
     const dpr = Math.min(window.devicePixelRatio || 1, 30000 / (w + AXIS_W));
     if (this.canvas.width !== Math.round(w * dpr) || this.canvas.height !== Math.round(h * dpr)) {
@@ -197,7 +234,7 @@ export class Heatmap {
     ctx.textBaseline = 'middle';
 
     for (let l = 0; l < r.nLayers; l++) {
-      const y = TOP + (r.nLayers - 1 - l) * CELL_H;
+      const y = this.rowY(l);
       const alpha = Math.max(0, Math.min(1, rows - l));
       for (let t = 0; t < r.nTokens; t++) {
         // columns before fromCol are already known and shown complete
@@ -222,13 +259,14 @@ export class Heatmap {
       }
       ctx.globalAlpha = 1;
     }
+    if (this.mtpRows) this.drawMtp(opts.mode, Math.max(0, Math.min(1, rows - r.nLayers)), fromCol, v);
 
     // input tokens along the bottom
     ctx.font = `400 condensed 12px ${FONT}`;
     ctx.textAlign = 'left';
     for (let t = 0; t < r.nTokens; t++) {
       const x = LEFT + t * CELL_W;
-      const y = TOP + r.nLayers * CELL_H + 15;
+      const y = this.rowY(0) + CELL_H + 15;
       ctx.save();
       ctx.beginPath();
       ctx.rect(x + 2, y - 10, CELL_W - 4, 20);
@@ -246,9 +284,48 @@ export class Heatmap {
       ctx.strokeStyle = v('--ink');
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.roundRect(LEFT + pos * CELL_W + 1, TOP + (r.nLayers - 1 - layer) * CELL_H + 1, CELL_W - 2, CELL_H - 2, 3);
+      ctx.roundRect(LEFT + pos * CELL_W + 1, this.rowY(layer) + 1, CELL_W - 2, CELL_H - 2, 3);
       ctx.stroke();
     }
+  }
+
+  /** the MTP row above a thin rule; its last cell stays empty, there is no next prompt token to read */
+  private drawMtp(mode: ColorMode, alpha: number, fromCol: number, v: (name: string) => string) {
+    const r = this.res!;
+    const ctx = this.ctx;
+    const ruleY = TOP + CELL_H + MTP_GAP / 2;
+    ctx.fillStyle = v('--rule');
+    ctx.fillRect(LEFT + 1, ruleY - 0.5, r.nTokens * CELL_W - 2, 1);
+    for (let t = 0; t < r.nTokens; t++) {
+      // continuing fills the old last cell too, it now has a next token
+      ctx.globalAlpha = t < fromCol - 1 ? 1 : alpha;
+      if (ctx.globalAlpha <= 0) continue;
+      const x = LEFT + t * CELL_W;
+      const id = r.mtpTopIds[this.mtpCell(t) * r.k];
+      ctx.beginPath();
+      ctx.roundRect(x + 1.5, TOP + 1.5, CELL_W - 3, CELL_H - 3, 3);
+      if (id < 0) {
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = v('--rule');
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
+      const c = this.mtpColor(t, mode);
+      ctx.fillStyle = c ? c.fill : v('--sunk');
+      ctx.fill();
+      ctx.fillStyle = c ? c.ink : v('--ink-2');
+      ctx.font = `500 condensed 12px ${FONT}`;
+      ctx.textAlign = 'left';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + 4, TOP, CELL_W - 8, CELL_H);
+      ctx.clip();
+      ctx.fillText(showPiece(r.pieces.get(id)), x + 5, TOP + CELL_H / 2 + 0.5);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawAxis(dpr: number, h: number, panel: string, ink: string) {
@@ -271,7 +348,11 @@ export class Heatmap {
     for (let l = 0; l < r.nLayers; l++) {
       // only label every other layer when the grid is tall
       if (r.nLayers > 16 && l % 2 !== 0 && l !== r.nLayers - 1) continue;
-      ctx.fillText(layerLabel(l), AXIS_W - 5, TOP + (r.nLayers - 1 - l) * CELL_H + CELL_H / 2);
+      ctx.fillText(layerLabel(l), AXIS_W - 5, this.rowY(l) + CELL_H / 2);
+    }
+    if (this.mtpRows) {
+      ctx.font = `600 condensed 11px ${FONT}`;
+      ctx.fillText('MTP', AXIS_W - 5, TOP + CELL_H / 2);
     }
   }
 
@@ -290,7 +371,7 @@ export class Heatmap {
   private drawEmergence(color: string, ring: string, cols: number) {
     const r = this.res!;
     const ctx = this.ctx;
-    const yOf = (l: number) => TOP + (r.nLayers - l) * CELL_H;
+    const yOf = (l: number) => this.rowY(l) + CELL_H;
     const path = new Path2D();
     let open = false;
     for (let t = 0; t < cols; t++) {

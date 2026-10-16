@@ -33,6 +33,11 @@ const TERMS: Record<string, { title: string; ask: string; text: string }> = {
     ask: 'What is KL divergence?',
     text: "How different a layer's whole list of guesses is from the final layer's. 0 means the same. A stronger blue means closer to the final answer; the scale is logarithmic.",
   },
+  mtp: {
+    title: 'MTP (multi-token prediction)',
+    ask: 'What is MTP?',
+    text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead (t+2). Its guesses are used to speed up writing text. The MTP row shows its top guess; the last column is empty because the next word is not known yet.',
+  },
   parameters: {
     title: 'Parameters',
     ask: 'What are parameters?',

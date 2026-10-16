@@ -2,7 +2,7 @@ import '@fontsource-variable/martian-mono/wdth.css';
 import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
 import './style.css';
 import { Wllama, type LogitLensResult } from '@wllama/wllama';
-import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
+import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
 import { info, initGlossary } from './glossary';
@@ -540,7 +540,8 @@ async function run(continuing = false): Promise<boolean> {
     try {
       lastInput = lensInput();
       // continuing: the lens runs only the new tokens if the old ones are unchanged
-      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing });
+      // mtp: models with an MTP (NextN) block get the t+2 row; nMtp is 0 for all others
+      res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing, mtp: true });
     } finally {
       ms = stop();
     }
@@ -640,9 +641,35 @@ btnExportJson.onclick = () => {
     tokens: r.tokens.map((id) => ({ token: piece(id), id })),
     note: 'layers[0] is the token embedding, layers[i] the output of block i-1; target is the token traced per position (default: final layer top-1); entropy and kl in nats, kl = KL(final layer || this layer) at the same position',
     layers,
+    ...(r.nMtp > 0 && { mtp: exportMtp(r, piece) }),
   };
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
 };
+
+const MTP_STAGES = ['after eh_proj', 'after attention', 'block output'];
+
+/** MTP stages for the JSON export; the heatmap row is the last stage */
+function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
+  const stages = [];
+  for (let s = 0; s < r.nMtp; s++) {
+    const cells = [];
+    for (let t = 0; t < r.nTokens; t++) {
+      const c = s * r.nTokens + t;
+      if (r.mtpTopIds[c * r.k] < 0) {
+        cells.push(null);
+        continue;
+      }
+      const top = [];
+      for (let j = 0; j < r.k; j++) top.push({ token: piece(r.mtpTopIds[c * r.k + j]), id: r.mtpTopIds[c * r.k + j], prob: r.mtpTopProbs[c * r.k + j] });
+      cells.push({ top, entropy: r.mtpEntropy[c] });
+    }
+    stages.push({ stage: MTP_STAGES[s] ?? String(s), cells });
+  }
+  return {
+    note: 'MTP (NextN) block, teacher-forced: cells[t] reads the final hidden state at token t and the embedding of token t+1, and guesses token t+2; the last cell is null (no token t+1 in the prompt); entropy in nats',
+    stages,
+  };
+}
 
 btnExportPng.onclick = () => {
   if (!res) return;
@@ -730,6 +757,9 @@ function renderSummary() {
   else if (settle === 0) text += ' Even the input row already points to it.';
   else text += ` It settles on this answer from ${name(settle)} upward${first < settle ? `, after first showing up at ${name(first)}` : ''}.`;
   if (prob < 0.2) text += ' The model is unsure, though: other words are almost as likely.';
+  // the MTP guess one column back is for this same next token
+  const m = heatmap.mtpRows && t > 0 ? r.mtpTopIds[heatmap.mtpCell(t - 1) * r.k] : -1;
+  if (m >= 0) text += ` The MTP row, guessing two tokens ahead from the column before, ${m === fin ? 'already had this word' : `had ${word(m)}`}.`;
   summaryEl.innerHTML = text;
 }
 
@@ -751,6 +781,11 @@ function render(animate = false, fromCol = 0) {
         ? `<span>How spread out the guesses are (entropy) ${info('entropy')}</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`
         : `<span>Difference from the final layer (KL) ${info('kl')}</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
   if (mode === 'prob' || mode === 'entropy' || mode === 'kl') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
+  $('howto-mtp').hidden = !heatmap.mtpRows;
+  if (heatmap.mtpRows) {
+    const shaded = mode === 'prob' || mode === 'entropy';
+    legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top row, MTP: guess for the token after next (t+2)${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`} ${info('mtp')}</span></span>`;
+  }
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
   tableWrap.hidden = !table;
@@ -764,6 +799,14 @@ function renderTable() {
   let html = '<table class="lens-table"><thead><tr><th scope="col">Layer</th>';
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
   html += '</tr></thead><tbody>';
+  if (heatmap.mtpRows) {
+    html += '<tr class="mtp-row"><th scope="row" title="MTP block: guess for the token after next (t+2)">MTP</th>';
+    for (let t = 0; t < r.nTokens; t++) {
+      const c = heatmap.mtpCell(t) * r.k;
+      html += r.mtpTopIds[c] < 0 ? '<td class="none">\u2013</td>' : `<td><span class="tok">${esc(piece(r.mtpTopIds[c]))}</span><span class="p">${pct(r.mtpTopProbs[c])}</span></td>`;
+    }
+    html += '</tr>';
+  }
   for (let l = r.nLayers - 1; l >= 0; l--) {
     html += `<tr><th scope="row">${layerLabel(l)}</th>`;
     for (let t = 0; t < r.nTokens; t++) {
@@ -787,8 +830,41 @@ function wordLines(cell: number): string {
   return s;
 }
 
+function placeTooltip(x: number, y: number) {
+  tooltip.hidden = false;
+  const tw = tooltip.offsetWidth;
+  const th = tooltip.offsetHeight;
+  tooltip.style.left = `${Math.max(8, Math.min(window.innerWidth - tw - 8, x + 14))}px`;
+  tooltip.style.top = `${y + th + 24 > window.innerHeight ? y - th - 14 : y + 14}px`;
+}
+
+/** MTP cell: column pos reads the final layer at pos and the next prompt token, and guesses the token after that */
+function showMtpTooltip(pos: number, x: number, y: number) {
+  const r = res!;
+  const tok = (id: number) => `<span class="tok">${esc(piece(id))}</span>`;
+  const c = heatmap.mtpCell(pos);
+  if (pos + 1 >= r.nTokens) {
+    tooltip.innerHTML = `<div class="tt-head">MTP, after ${tok(r.tokens[pos])}</div><div class="tt-foot tt-only">No MTP guess here: the MTP block also reads the next token, and the prompt ends here.</div>`;
+    return placeTooltip(x, y);
+  }
+  let rows = '';
+  for (let j = 0; j < r.k; j++) {
+    const i = c * r.k + j;
+    rows += `<tr><td class="tok">${esc(piece(r.mtpTopIds[i]))}</td><td class="num">${pct(r.mtpTopProbs[i])}</td></tr>`;
+  }
+  const actual = pos + 2 < r.nTokens ? `<br>The prompt continues with ${tok(r.tokens[pos + 2])}.` : '';
+  const mode = colorMode();
+  const neutral = mode === 'prob' || mode === 'entropy' ? '' : `<br>Not shaded: MTP has no ${mode === 'kl' ? 'KL' : 'word probabilities'}.`;
+  tooltip.innerHTML =
+    `<div class="tt-head">MTP guess after <span class="tok">${esc(piece(r.tokens[pos]) + piece(r.tokens[pos + 1]))}</span> for the token after next</div>` +
+    `<table>${rows}</table>` +
+    `<div class="tt-foot">Entropy ${r.mtpEntropy[c].toFixed(2)} nats. The MTP block reads the final layer at ${tok(r.tokens[pos])} and the next prompt token, and guesses two tokens ahead (t+2).${actual}${neutral}</div>`;
+  placeTooltip(x, y);
+}
+
 function showTooltip(layer: number, pos: number, x: number, y: number) {
   const r = res!;
+  if (layer >= r.nLayers) return showMtpTooltip(pos, x, y);
   const cell = layer * r.nTokens + pos;
   let rows = '';
   for (let j = 0; j < r.k; j++) {
@@ -799,11 +875,7 @@ function showTooltip(layer: number, pos: number, x: number, y: number) {
     `<div class="tt-head">Layer ${layerLabel(layer)}, after <span class="tok">${esc(piece(r.tokens[pos]))}</span></div>` +
     `<table>${rows}</table>` +
     `<div class="tt-foot">Entropy ${r.entropy[cell].toFixed(2)} nats, KL to final layer ${r.kl[cell].toFixed(2)} nats<br>${r.targetIds[cell] === r.topIds[((r.nLayers - 1) * r.nTokens + pos) * r.k] ? 'Final prediction' : 'Traced word'} <span class="tok">${esc(piece(r.targetIds[cell]))}</span>: rank ${r.targetRanks[cell] + 1}, ${pct(r.targetProbs[cell])}${wordLines(cell)}</div>`;
-  tooltip.hidden = false;
-  const tw = tooltip.offsetWidth;
-  const th = tooltip.offsetHeight;
-  tooltip.style.left = `${Math.max(8, Math.min(window.innerWidth - tw - 8, x + 14))}px`;
-  tooltip.style.top = `${y + th + 24 > window.innerHeight ? y - th - 14 : y + 14}px`;
+  placeTooltip(x, y);
 }
 
 function trace(pos: number) {
@@ -819,7 +891,8 @@ function trace(pos: number) {
   traceDesc.innerHTML = `Where <span class="tok">${esc(piece(target))}</span> ranks among each layer's guesses after <span class="tok">${esc(piece(r.tokens[pos]))}</span> (position ${pos}); rank 1 is the top guess. Pick another word to follow, from the final layer or the selected cell:`;
   const last = (r.nLayers - 1) * r.nTokens + pos;
   const cands = Array.from(r.topIds.slice(last * r.k, last * r.k + r.k));
-  if (selected) {
+  // the MTP row guesses another position (t+2), so it adds no word to follow here
+  if (selected && selected.layer < r.nLayers) {
     const top = r.topIds[(selected.layer * r.nTokens + pos) * r.k];
     if (!cands.includes(top)) cands.push(top);
   }
@@ -857,10 +930,13 @@ async function retarget(pos: number, id: number) {
   try {
     const targets = Array.from(res.targetIds.slice(0, res.nTokens));
     targets[pos] = id;
-    const { pieces, kl } = res;
+    const prev = res;
     const t0 = performance.now();
     res = await wllama.logitLens({ prompt: '', reuse: true, k: res.k, targetIds: targets });
-    res.kl = kl; // reuse with targets skips KL, it does not depend on them
+    // reuse with targets skips KL, and runs without MTP; neither depends on the targets
+    res.kl = prev.kl;
+    ({ nMtp: res.nMtp, mtpTopIds: res.mtpTopIds, mtpTopProbs: res.mtpTopProbs, mtpEntropy: res.mtpEntropy } = prev);
+    const pieces = prev.pieces;
     renderTimings(res, performance.now() - t0);
     for (const [k, v] of pieces) if (!res.pieces.has(k)) res.pieces.set(k, v);
     heatmap.setResult(res);
@@ -913,12 +989,12 @@ canvas.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     const [dl, dp] = moves[ev.key];
     selected = {
-      layer: Math.max(0, Math.min(res.nLayers - 1, s.layer + dl)),
+      layer: Math.max(0, Math.min(res.nLayers - 1 + heatmap.mtpRows, s.layer + dl)),
       pos: Math.max(0, Math.min(res.nTokens - 1, s.pos + dp)),
     };
     render();
     const rect = canvas.getBoundingClientRect();
-    showTooltip(selected.layer, selected.pos, rect.left + LEFT + (selected.pos + 0.5) * CELL_W, rect.top + TOP + (res.nLayers - selected.layer) * CELL_H);
+    showTooltip(selected.layer, selected.pos, rect.left + LEFT + (selected.pos + 0.5) * CELL_W, rect.top + heatmap.rowY(selected.layer) + CELL_H);
   } else if (ev.key === 'Enter' && selected) {
     trace(selected.pos);
   } else if (ev.key === 'Escape') {
