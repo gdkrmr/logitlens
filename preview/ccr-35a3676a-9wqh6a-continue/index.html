@@ -14,9 +14,9 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <script type="module" crossorigin src="./assets/main-HEeOgg7i.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/style-CXt6Ek9I.js">
-    <link rel="stylesheet" crossorigin href="./assets/style-DHaqK5XP.css">
+    <script type="module" crossorigin src="./assets/main-Co3LUdgu.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/style-BwCoatzl.js">
+    <link rel="stylesheet" crossorigin href="./assets/style-DmsgN0Y1.css">
   </head>
   <body>
     <div class="app">
@@ -24,7 +24,7 @@
         <header class="brand">
           <p class="wordmark">logit lens</p>
           <p id="preview-badge" class="preview-badge" hidden></p>
-          <p class="tagline">Decode every layer of a language model through its own output head, and watch the next-token prediction form.</p>
+          <p class="tagline">Look inside a language model: see which word each of its layers would predict next, and watch the final answer form.</p>
         </header>
 
         <section class="block">
@@ -36,7 +36,7 @@
             </div>
             <p class="hint download-note" data-download-note></p>
           </div>
-          <p id="model-status" class="status" role="status">No model loaded.</p>
+          <p id="model-status" class="status" role="status">No model loaded yet.</p>
 
           <details id="model-options" class="options">
             <summary>Model and settings</summary>
@@ -47,7 +47,7 @@
               <div id="repo-list" class="repo-list" aria-label="Models"></div>
 
               <div id="quant-block" class="quant-block" hidden>
-                <h3 class="label" id="quant-h">Quantization <span id="quant-repo" class="label-note"></span></h3>
+                <h3 class="label"><span id="quant-h">Quantization</span> <button class="info" data-term="quantization"></button> <span id="quant-repo" class="label-note"></span></h3>
                 <p id="quant-note" class="hint" hidden></p>
                 <div id="quant-list" class="quant-list" role="radiogroup" aria-labelledby="quant-h"></div>
                 <p class="hint">Higher precision (Q8_0, F16) keeps early-layer readouts cleaner on small models.</p>
@@ -57,7 +57,7 @@
                 <input id="file-input" type="file" accept=".gguf" multiple />
                 <span>Open .gguf file</span>
               </label>
-              <label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU</label>
+              <div class="check-row"><label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU (graphics card)</label><button class="info" data-term="webgpu"></button></div>
               <div id="cache-row" class="cache-row" hidden>
                 <span id="cache-info"></span>
                 <button id="btn-clear-cache" type="button" class="link-btn">Delete cached models</button>
@@ -92,7 +92,7 @@
             </div>
           </div>
           <div class="chat-row">
-            <label class="check" id="chat-label" title="Load a model first"><input id="use-chat" type="checkbox" disabled /> Chat format</label>
+            <label class="check" id="chat-label" title="Load a model first"><input id="use-chat" type="checkbox" disabled /> Chat format</label><button class="info" data-term="chat"></button>
             <span id="chat-note" class="chat-note"></span>
           </div>
           <div class="examples" role="group" aria-labelledby="examples-label">
@@ -118,19 +118,19 @@
 
         <section id="empty" class="empty">
           <p class="empty-title" id="empty-title">Load a model to start.</p>
-          <p class="empty-note">SmolLM2 135M is preselected because it is a small download. Larger models (0.5 to 1B parameters) give clearer readouts in the middle layers.</p>
+          <p class="empty-note">SmolLM2 135M is preselected because it is a small download. Larger models (0.5 to 1 billion parameters <button class="info" data-term="parameters"></button>) give clearer results in the middle layers.</p>
           <p class="empty-action"><button id="btn-load-empty" type="button" class="btn" hidden></button></p>
           <p class="hint download-note empty-download-note" data-download-note></p>
-          <p>Each column is one token of your prompt. Rows are the model's layers, from the token embeddings at the bottom to the final layer at the top. Each cell shows the token that layer would predict next, shaded by how confident it is.</p>
+          <p>Each column is one piece of your prompt, called a token <button class="info" data-term="token"></button>. Each row is one processing step of the model, called a layer <button class="info" data-term="layer"></button>: the input at the bottom (the embedding <button class="info" data-term="embedding"></button>), the final answer at the top. Each cell shows the word that step would predict next, in a stronger color when the model is more confident.</p>
         </section>
 
         <section id="result" class="block readout" hidden aria-labelledby="result-h">
           <div class="readout-head">
-            <h2 id="result-h" class="label">Readout</h2>
+            <div class="head-term"><h2 id="result-h" class="label">What each layer predicts</h2><button class="info" data-term="layer"></button></div>
             <div class="controls">
               <div class="seg" role="radiogroup" aria-label="Shade cells by">
-                <label><input type="radio" name="color" value="prob" checked /> Probability</label>
-                <label><input type="radio" name="color" value="entropy" /> Entropy</label>
+                <label title="How sure each layer is of its top word"><input type="radio" name="color" value="prob" checked /> Probability</label>
+                <label title="How spread out each layer's guesses are"><input type="radio" name="color" value="entropy" /> Entropy</label>
                 <label title="How far this layer's guesses are from the final layer's (KL divergence)"><input type="radio" name="color" value="kl" /> KL</label>
                 <label title="Pick a word in the trace below first"><input type="radio" name="color" value="word" disabled /> Word</label>
                 <label title="Pick two words in the trace below first"><input type="radio" name="color" value="contrast" disabled /> Contrast</label>
@@ -152,9 +152,10 @@
             <ul>
               <li>Each <strong>column</strong> is one piece of your prompt. The model reads text in pieces called tokens, so long words are split, for example "Eiffel" into "Eiff" and "el".</li>
               <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
-              <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. Darker means more confident.</li>
+              <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. A stronger blue means more confident.</li>
               <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
-              <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: darker means the layer already thinks like the final answer.</li>
+              <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: a stronger blue means the layer already thinks like the final answer.</li>
+              <li>The small <strong>i</strong> markers explain terms; click or tap them.</li>
               <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>
             </ul>
           </details>
@@ -170,7 +171,7 @@
         </section>
 
         <section class="block" id="trace" hidden aria-labelledby="trace-h">
-          <h2 id="trace-h" class="label">Trace</h2>
+          <h2 id="trace-h" class="label">Follow one word</h2>
           <p id="trace-desc" class="trace-desc"></p>
           <div id="trace-chips" class="chips" role="group" aria-label="Token to trace"></div>
           <div id="trace-actions" class="trace-actions"></div>
@@ -180,5 +181,6 @@
     </div>
 
     <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+    <div id="gloss" class="gloss" role="status"></div>
   </body>
 </html>
