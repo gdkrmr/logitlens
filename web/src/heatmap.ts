@@ -101,10 +101,13 @@ export class Heatmap {
     return this.res && this.res.nMtp > 0 ? 1 : 0;
   }
 
-  /** the MTP cell shown for position t: the block output, its last stage */
+  /**
+   * MTP cell drawn in column t: the block output (last stage) made at position t - 1, which guesses
+   * the token after t, the same token as every layer in column t; -1 for the first column
+   */
   mtpCell(t: number): number {
     const r = this.res!;
-    return (r.nMtp - 1) * r.nTokens + t;
+    return t < 1 ? -1 : (r.nMtp - 1) * r.nTokens + t - 1;
   }
 
   /** top of a row; layer nLayers is the MTP row */
@@ -166,6 +169,7 @@ export class Heatmap {
   mtpColor(t: number, mode: ColorMode): { fill: string; ink: string } | null {
     const r = this.res!;
     const c = this.mtpCell(t);
+    if (c < 0) return null;
     if (mode === 'prob') return rampColor(r.mtpTopProbs[c * r.k]);
     if (mode === 'entropy') return rampColor(r.mtpEntropy[c] / this.maxEntropy);
     return null;
@@ -289,7 +293,7 @@ export class Heatmap {
     }
   }
 
-  /** the MTP row above a thin rule; its last cell stays empty, there is no next prompt token to read */
+  /** the MTP row above a thin rule; its first cell stays empty, there is no earlier position to guess from */
   private drawMtp(mode: ColorMode, alpha: number, fromCol: number, v: (name: string) => string) {
     const r = this.res!;
     const ctx = this.ctx;
@@ -297,11 +301,11 @@ export class Heatmap {
     ctx.fillStyle = v('--rule');
     ctx.fillRect(LEFT + 1, ruleY - 0.5, r.nTokens * CELL_W - 2, 1);
     for (let t = 0; t < r.nTokens; t++) {
-      // continuing fills the old last cell too, it now has a next token
-      ctx.globalAlpha = t < fromCol - 1 ? 1 : alpha;
+      ctx.globalAlpha = t < fromCol ? 1 : alpha;
       if (ctx.globalAlpha <= 0) continue;
       const x = LEFT + t * CELL_W;
-      const id = r.mtpTopIds[this.mtpCell(t) * r.k];
+      const c = this.mtpCell(t);
+      const id = c < 0 ? -1 : r.mtpTopIds[c * r.k];
       ctx.beginPath();
       ctx.roundRect(x + 1.5, TOP + 1.5, CELL_W - 3, CELL_H - 3, 3);
       if (id < 0) {
@@ -312,10 +316,10 @@ export class Heatmap {
         ctx.setLineDash([]);
         continue;
       }
-      const c = this.mtpColor(t, mode);
-      ctx.fillStyle = c ? c.fill : v('--sunk');
+      const col = this.mtpColor(t, mode);
+      ctx.fillStyle = col ? col.fill : v('--sunk');
       ctx.fill();
-      ctx.fillStyle = c ? c.ink : v('--ink-2');
+      ctx.fillStyle = col ? col.ink : v('--ink-2');
       ctx.font = `500 condensed 12px ${FONT}`;
       ctx.textAlign = 'left';
       ctx.save();

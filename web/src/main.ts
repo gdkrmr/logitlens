@@ -540,7 +540,7 @@ async function run(continuing = false): Promise<boolean> {
     try {
       lastInput = lensInput();
       // continuing: the lens runs only the new tokens if the old ones are unchanged
-      // mtp: models with an MTP (NextN) block get the t+2 row; nMtp is 0 for all others
+      // mtp: models with an MTP (NextN) block get the MTP row; nMtp is 0 for all others
       res = await wllama.logitLens({ prompt: lastInput, k: 5, incremental: continuing, mtp: true });
     } finally {
       ms = stop();
@@ -666,7 +666,7 @@ function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
     stages.push({ stage: MTP_STAGES[s] ?? String(s), cells });
   }
   return {
-    note: 'MTP (NextN) block, teacher-forced: cells[t] reads the final hidden state at token t and the embedding of token t+1, and guesses token t+2; the last cell is null (no token t+1 in the prompt); entropy in nats',
+    note: 'MTP (NextN) block, teacher-forced: cells[t] reads the final hidden state at token t and the embedding of token t+1, and guesses token t+2; the last cell is null (no token t+1 in the prompt); the heatmap draws cells[t] in column t+1, next to the layers that guess the same token; entropy in nats',
     stages,
   };
 }
@@ -757,9 +757,10 @@ function renderSummary() {
   else if (settle === 0) text += ' Even the input row already points to it.';
   else text += ` It settles on this answer from ${name(settle)} upward${first < settle ? `, after first showing up at ${name(first)}` : ''}.`;
   if (prob < 0.2) text += ' The model is unsure, though: other words are almost as likely.';
-  // the MTP guess one column back is for this same next token
-  const m = heatmap.mtpRows && t > 0 ? r.mtpTopIds[heatmap.mtpCell(t - 1) * r.k] : -1;
-  if (m >= 0) text += ` The MTP row, guessing two tokens ahead from the column before, ${m === fin ? 'already had this word' : `had ${word(m)}`}.`;
+  // the MTP cell in this column guesses the same next token, made one position earlier
+  const mc = heatmap.mtpRows ? heatmap.mtpCell(t) : -1;
+  const m = mc >= 0 ? r.mtpTopIds[mc * r.k] : -1;
+  if (m >= 0) text += ` The MTP row, which guessed this token one position earlier, ${m === fin ? 'already had this word' : `had ${word(m)}`}.`;
   summaryEl.innerHTML = text;
 }
 
@@ -784,7 +785,7 @@ function render(animate = false, fromCol = 0) {
   $('howto-mtp').hidden = !heatmap.mtpRows;
   if (heatmap.mtpRows) {
     const shaded = mode === 'prob' || mode === 'entropy';
-    legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top row, MTP: guess for the token after next (t+2)${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`} ${info('mtp')}</span></span>`;
+    legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top row, MTP: the same next token, guessed one position earlier${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`} ${info('mtp')}</span></span>`;
   }
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
@@ -800,10 +801,10 @@ function renderTable() {
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
   html += '</tr></thead><tbody>';
   if (heatmap.mtpRows) {
-    html += '<tr class="mtp-row"><th scope="row" title="MTP block: guess for the token after next (t+2)">MTP</th>';
+    html += '<tr class="mtp-row"><th scope="row" title="MTP block: the same next token, guessed one position earlier">MTP</th>';
     for (let t = 0; t < r.nTokens; t++) {
       const c = heatmap.mtpCell(t) * r.k;
-      html += r.mtpTopIds[c] < 0 ? '<td class="none">\u2013</td>' : `<td><span class="tok">${esc(piece(r.mtpTopIds[c]))}</span><span class="p">${pct(r.mtpTopProbs[c])}</span></td>`;
+      html += c < 0 || r.mtpTopIds[c] < 0 ? '<td class="none">\u2013</td>' : `<td><span class="tok">${esc(piece(r.mtpTopIds[c]))}</span><span class="p">${pct(r.mtpTopProbs[c])}</span></td>`;
     }
     html += '</tr>';
   }
@@ -838,13 +839,13 @@ function placeTooltip(x: number, y: number) {
   tooltip.style.top = `${y + th + 24 > window.innerHeight ? y - th - 14 : y + 14}px`;
 }
 
-/** MTP cell: column pos reads the final layer at pos and the next prompt token, and guesses the token after that */
+/** MTP cell in column pos: made at pos - 1 from the final layer there and the prompt token at pos, it guesses the token after pos */
 function showMtpTooltip(pos: number, x: number, y: number) {
   const r = res!;
   const tok = (id: number) => `<span class="tok">${esc(piece(id))}</span>`;
   const c = heatmap.mtpCell(pos);
-  if (pos + 1 >= r.nTokens) {
-    tooltip.innerHTML = `<div class="tt-head">MTP, after ${tok(r.tokens[pos])}</div><div class="tt-foot tt-only">No MTP guess here: the MTP block also reads the next token, and the prompt ends here.</div>`;
+  if (c < 0) {
+    tooltip.innerHTML = `<div class="tt-head">MTP, after ${tok(r.tokens[pos])}</div><div class="tt-foot tt-only">No MTP guess here: the MTP block guesses from the position before, and this is the first token.</div>`;
     return placeTooltip(x, y);
   }
   let rows = '';
@@ -852,13 +853,13 @@ function showMtpTooltip(pos: number, x: number, y: number) {
     const i = c * r.k + j;
     rows += `<tr><td class="tok">${esc(piece(r.mtpTopIds[i]))}</td><td class="num">${pct(r.mtpTopProbs[i])}</td></tr>`;
   }
-  const actual = pos + 2 < r.nTokens ? `<br>The prompt continues with ${tok(r.tokens[pos + 2])}.` : '';
+  const actual = pos + 1 < r.nTokens ? `<br>The prompt continues with ${tok(r.tokens[pos + 1])}.` : '';
   const mode = colorMode();
   const neutral = mode === 'prob' || mode === 'entropy' ? '' : `<br>Not shaded: MTP has no ${mode === 'kl' ? 'KL' : 'word probabilities'}.`;
   tooltip.innerHTML =
-    `<div class="tt-head">MTP guess after <span class="tok">${esc(piece(r.tokens[pos]) + piece(r.tokens[pos + 1]))}</span> for the token after next</div>` +
+    `<div class="tt-head">MTP guess for the token after ${tok(r.tokens[pos])}</div>` +
     `<table>${rows}</table>` +
-    `<div class="tt-foot">Entropy ${r.mtpEntropy[c].toFixed(2)} nats. The MTP block reads the final layer at ${tok(r.tokens[pos])} and the next prompt token, and guesses two tokens ahead (t+2).${actual}${neutral}</div>`;
+    `<div class="tt-foot">Entropy ${r.mtpEntropy[c].toFixed(2)} nats. Guessed one position earlier: the MTP block read the final layer at ${tok(r.tokens[pos - 1])} plus the prompt token ${tok(r.tokens[pos])}, two tokens ahead of ${tok(r.tokens[pos - 1])}. The layers below guess the same token.${actual}${neutral}</div>`;
   placeTooltip(x, y);
 }
 
@@ -891,7 +892,7 @@ function trace(pos: number) {
   traceDesc.innerHTML = `Where <span class="tok">${esc(piece(target))}</span> ranks among each layer's guesses after <span class="tok">${esc(piece(r.tokens[pos]))}</span> (position ${pos}); rank 1 is the top guess. Pick another word to follow, from the final layer or the selected cell:`;
   const last = (r.nLayers - 1) * r.nTokens + pos;
   const cands = Array.from(r.topIds.slice(last * r.k, last * r.k + r.k));
-  // the MTP row guesses another position (t+2), so it adds no word to follow here
+  // the MTP row adds no word to follow here; its guesses come from another position
   if (selected && selected.layer < r.nLayers) {
     const top = r.topIds[(selected.layer * r.nTokens + pos) * r.k];
     if (!cands.includes(top)) cands.push(top);

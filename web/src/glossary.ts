@@ -36,7 +36,7 @@ const TERMS: Record<string, { title: string; ask: string; text: string }> = {
   mtp: {
     title: 'MTP (multi-token prediction)',
     ask: 'What is MTP?',
-    text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead (t+2). Its guesses are used to speed up writing text. The MTP row shows its top guess; the last column is empty because the next word is not known yet.',
+    text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead. Its guesses are used to speed up writing text. The MTP row puts each guess in the column of the word it guesses, so it lines up with the layers below; the first column is empty.',
   },
   parameters: {
     title: 'Parameters',
