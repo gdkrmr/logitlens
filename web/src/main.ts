@@ -5,6 +5,7 @@ import { Wllama, type LogitLensResult } from '@wllama/wllama';
 import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, CELL_W, CELL_H, LEFT, TOP, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
+import { info, initGlossary } from './glossary';
 import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
 
 // shown when the search box is empty
@@ -161,7 +162,7 @@ function syncLoad() {
     const size = Number.isNaN(selectedSize) ? '' : `${fmtBytes(selectedSize)} `;
     note = `Downloads ${size}from ${new URL(selectedUrl).host} over your connection. The file is then kept in your browser for later visits.`;
     if (!size) note += ' Its size is shown once the download starts.';
-    if (confirming) note += ' Click again to start the download, or pick a smaller quantization.';
+    if (confirming) note += ' Click again to start the download, or pick a smaller file under Model and settings.';
     else if (needsConfirm()) note += size ? ' Files this large ask for a second click.' : ' Downloads of unknown size ask for a second click.';
   }
   downloadNotes.forEach((el) => (el.textContent = note));
@@ -437,7 +438,7 @@ async function load(source: { url: string } | { files: File[] }) {
           phase = 'Loading';
           btnCancel.hidden = true;
           loadPhase.textContent = loadingPhase;
-          loadDetail.textContent = `Downloaded ${fmtBytes(total)}. Setting up the model${useGpu.checked ? ' and WebGPU' : ''}; this can take a few seconds.`;
+          loadDetail.textContent = `Downloaded ${fmtBytes(total)}. Setting up the model${useGpu.checked ? ' and the graphics card' : ''}; this can take a few seconds.`;
           setBar(null);
           return;
         }
@@ -456,7 +457,7 @@ async function load(source: { url: string } | { files: File[] }) {
       },
     };
     if (fromCache || !('url' in source)) {
-      loadDetail.textContent = `Setting up the model${useGpu.checked ? ' and WebGPU' : ''}; this can take a few seconds.`;
+      loadDetail.textContent = `Setting up the model${useGpu.checked ? ' and the graphics card' : ''}; this can take a few seconds.`;
     }
     try {
       // download completely before unloading the current model, so a cancelled download keeps it
@@ -480,10 +481,10 @@ async function load(source: { url: string } | { files: File[] }) {
     const name = meta.meta['general.name'] ?? ('url' in source ? source.url.split('/').pop() : source.files[0].name);
     modelIndicator.querySelector('a')!.textContent = `${name} \u00b7 loaded`;
     modelIndicator.hidden = false;
-    modelStatus.textContent = `${name} (${arch}, ${info.n_layer} layers) loaded in ${fmtMs(loadMs!)}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}.`;
+    modelStatus.textContent = `${name} is ready. It has ${info.n_layer} layers. Loaded in ${fmtMs(loadMs!)} (${arch}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}).`;
   } catch (e) {
     const kept = wllama.isModelLoaded() ? ' The previous model is still loaded.' : '';
-    modelStatus.textContent = ctl.signal.aborted ? `Download cancelled.${kept}` : `Load failed: ${(e as Error).message}`;
+    modelStatus.textContent = ctl.signal.aborted ? `Download cancelled.${kept}` : `Could not load the model: ${(e as Error).message}`;
   } finally {
     loadCtl = null;
     loadPanel.hidden = true;
@@ -564,7 +565,7 @@ async function run(continuing = false): Promise<boolean> {
     else {
       const msg = (e as Error).message;
       // the token limit counts the tokens the chat format adds
-      runStatus.textContent = `Error: ${msg}${chatOn() && /limit/.test(msg) ? ' The chat format adds tokens of its own.' : ''}`;
+      runStatus.textContent = `Something went wrong: ${msg}${chatOn() && /limit/.test(msg) ? ' The chat format adds tokens of its own.' : ''}`;
     }
     return false;
   } finally {
@@ -690,7 +691,7 @@ async function chooseWord(kind: 'word' | 'contrast', id: number) {
     render();
     if (tracedPos !== null) trace(tracedPos);
   } catch (e) {
-    runStatus.textContent = `Error: ${(e as Error).message}`;
+    runStatus.textContent = `Something went wrong: ${(e as Error).message}`;
   } finally {
     setBusy(false);
   }
@@ -744,10 +745,10 @@ function render(animate = false, fromCol = 0) {
   }
   const scale =
     mode === 'prob'
-      ? `<span>Top-1 probability</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span>`
+      ? `<span>How sure the top word is (probability) ${info('probability')}</span><span>0%</span><span class="bar" style="background:${rampGradientCss()}"></span><span>100%</span>`
       : mode === 'entropy'
-        ? `<span>Entropy</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`
-        : `<span>Difference from the final layer (KL, log scale)</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
+        ? `<span>How spread out the guesses are (entropy) ${info('entropy')}</span><span>0</span><span class="bar" style="background:${rampGradientCss()}"></span><span>${heatmap.maxEntropy.toFixed(1)} nats</span>`
+        : `<span>Difference from the final layer (KL) ${info('kl')}</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
   if (mode === 'prob' || mode === 'entropy' || mode === 'kl') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
   const table = viewMode() === 'table';
   heatmapWrap.hidden = table;
@@ -814,7 +815,7 @@ function trace(pos: number) {
     pts.push({ layer: l, rank: r.targetRanks[cell], prob: r.targetProbs[cell] });
   }
   const target = r.targetIds[pos];
-  traceDesc.innerHTML = `Rank of <span class="tok">${esc(piece(target))}</span> at position ${pos} (after <span class="tok">${esc(piece(r.tokens[pos]))}</span>) across layers. Pick another candidate from the final layer or the selected cell:`;
+  traceDesc.innerHTML = `Where <span class="tok">${esc(piece(target))}</span> ranks among each layer's guesses after <span class="tok">${esc(piece(r.tokens[pos]))}</span> (position ${pos}); rank 1 is the top guess. Pick another word to follow, from the final layer or the selected cell:`;
   const last = (r.nLayers - 1) * r.nTokens + pos;
   const cands = Array.from(r.topIds.slice(last * r.k, last * r.k + r.k));
   if (selected) {
@@ -865,7 +866,7 @@ async function retarget(pos: number, id: number) {
     render();
     trace(pos);
   } catch (e) {
-    runStatus.textContent = `Error: ${(e as Error).message}`;
+    runStatus.textContent = `Something went wrong: ${(e as Error).message}`;
   } finally {
     setBusy(false);
   }
@@ -1005,7 +1006,7 @@ themeInputs.forEach((input) => {
 if (!wllama.isSupportWebGPU()) {
   useGpu.checked = false;
   useGpu.disabled = true;
-  modelStatus.textContent = 'WebGPU is not available in this browser, the lens will run on the CPU.';
+  modelStatus.textContent = 'This browser cannot use the graphics card (no WebGPU), so the model runs on the main processor. That is slower, but works.';
 }
 // the options disclosure remembers its state per browser
 try {
@@ -1062,6 +1063,7 @@ if (previewBranch) {
 }
 
 runStatus.textContent = idleHint;
+initGlossary();
 // desktop shows the full timing strip; phones start with the one-line summary
 timingsBox.open = window.matchMedia('(min-width: 861px)').matches;
 

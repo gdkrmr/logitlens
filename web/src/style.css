@@ -1106,8 +1106,15 @@ progress {
 .chat-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 4px 12px;
+  margin-top: 12px;
+}
+.chat-row .check {
+  margin-top: 0;
+}
+.chat-row .info {
+  margin-left: -6px;
 }
 .chat-row .check:has(input:disabled) {
   color: var(--ink-3);
@@ -1115,4 +1122,75 @@ progress {
 .chat-note {
   font-size: 13px;
   color: var(--ink-3);
+}
+
+/* glossary markers: a small "i" next to a term, with a larger hit area for touch */
+.info {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 1px;
+  padding: 0;
+  vertical-align: 0.05em;
+  font: 700 10.5px/1 var(--body);
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--ink-3);
+  border-radius: 50%;
+  cursor: help;
+}
+.info::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+.info:hover,
+.info[aria-expanded='true'] {
+  color: var(--panel);
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+}
+.gloss {
+  position: fixed;
+  z-index: 11;
+  max-width: min(300px, calc(100vw - 16px));
+  background: var(--panel);
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.16);
+}
+.gloss:empty {
+  /* stays in the accessibility tree, so the live region announces new text */
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.gloss strong {
+  color: var(--ink);
+}
+.head-term {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.head-term .label {
+  margin: 0;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+.check-row .check {
+  margin-top: 0;
 }
