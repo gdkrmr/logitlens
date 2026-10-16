@@ -538,8 +538,8 @@ progress {
   font-stretch: 87.5%;
   color: var(--ink-3);
 }
-.lens-table .mtp-row th,
-.lens-table .mtp-row td {
+.lens-table .mtp-row.mtp-last th,
+.lens-table .mtp-row.mtp-last td {
   border-bottom: 3px double var(--rule);
 }
 .lens-table td.none {

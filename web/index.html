@@ -56,9 +56,9 @@
               </label>
               <div class="check-row"><label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU (graphics card)</label><button class="info" data-term="webgpu"></button></div>
               <div id="mtp-settings" class="mtp-settings" hidden>
-                <div class="check-row"><label class="check"><input id="use-mtp" type="checkbox" checked /> MTP row and draft</label><button class="info" data-term="mtp"></button></div>
+                <div class="check-row"><label class="check"><input id="use-mtp" type="checkbox" checked /> MTP rows and draft</label><button class="info" data-term="mtp"></button></div>
                 <div class="check-row"><label class="num" for="mtp-draft">Draft tokens</label><input id="mtp-draft" type="number" min="0" max="8" step="1" value="3" inputmode="numeric" /><button class="info" data-term="draft"></button></div>
-                <p class="hint">This model has an MTP block. Off: no MTP row, no draft, and a faster run. 0 draft tokens keeps only the MTP row.</p>
+                <p class="hint">This model has an MTP block. Off: no MTP rows, no draft, and a faster run. 0 draft tokens keeps only the MTP rows.</p>
               </div>
               <div id="cache-row" class="cache-row" hidden>
                 <span id="cache-info"></span>
@@ -156,8 +156,9 @@
               <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
               <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. A stronger blue means more confident.</li>
               <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
-              <li id="howto-mtp" hidden>Some models have an extra <strong>MTP</strong> block <button class="info" data-term="mtp"></button>, shown as the row above the final layer. It guesses two tokens ahead, one position earlier than the layers, but its guess is drawn in the same column as theirs, so every cell in a column guesses the same next token. The first cell is empty.</li>
-              <li id="howto-draft" hidden>The dashed <strong>draft</strong> columns go past your prompt. The MTP block guesses on from its own guesses, as in speculative decoding: under each column is the token it reads, the first one being the model's final prediction, and the MTP cell is its guess for the token after. Only the MTP row has cells there.</li>
+              <li id="howto-mtp" hidden>Some models have an extra <strong>MTP</strong> block <button class="info" data-term="mtp"></button>, shown as the rows above the final layer. It guesses two tokens ahead, one position earlier than the layers, but its guess is drawn in the same column as theirs, so every cell in a column guesses the same next token. The first column is empty.</li>
+              <li id="howto-mtp-stages" hidden>The MTP block has three rows <button class="info" data-term="mtpstages"></button>, read from the bottom up like the layers: <strong>proj</strong>, after it mixes the last layer with the next word; <strong>attn</strong>, after it looks back over the text; and <strong>MTP</strong>, its output after a last refining step.</li>
+              <li id="howto-draft" hidden>The dashed <strong>draft</strong> columns go past your prompt. The MTP block guesses on from its own guesses, as in speculative decoding: under each column is the token it reads, the first one being the model's final prediction, and the MTP cells are its guess for the token after. Only the MTP rows have cells there.</li>
               <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: a stronger blue means the layer already thinks like the final answer.</li>
               <li>The small <strong>i</strong> markers explain terms; click or tap them.</li>
               <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>

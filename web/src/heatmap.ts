@@ -60,6 +60,10 @@ export function showPiece(s: string | undefined): string {
 
 export const layerLabel = (l: number) => (l === 0 ? 'emb' : String(l - 1));
 
+/** MTP stages, bottom to top: short axis labels and full names */
+export const MTP_STAGE_LABELS = ['proj', 'attn', 'MTP'];
+export const MTP_STAGE_NAMES = ['after eh_proj', 'after attention', 'MTP output'];
+
 export interface HeatmapOpts {
   mode: ColorMode;
   selected: { layer: number; pos: number } | null;
@@ -72,7 +76,7 @@ export const AXIS_W = 40;
 export const LEFT = 2;
 export const TOP = 8;
 const BOTTOM = 30;
-// space between the MTP row and the final layer
+// space between the MTP rows and the final layer
 const MTP_GAP = 9;
 const FONT = '"Martian Mono Variable", ui-monospace, monospace';
 
@@ -96,21 +100,29 @@ export class Heatmap {
     this.axisCtx = axis.getContext('2d')!;
   }
 
-  /** 1 when the model has an MTP (NextN) block: one extra row above the final layer */
+  /**
+   * MTP rows above the final layer, one per stage of the NextN block (0 without it).
+   * Row layer nLayers + s is stage s: 0 after eh_proj, 1 after attention, 2 the block output.
+   */
   get mtpRows(): number {
-    return this.res && this.res.nMtp > 0 ? 1 : 0;
+    return this.res && this.res.nMtp > 0 ? this.res.nMtp : 0;
+  }
+
+  /** the block output stage, used by the summary */
+  get mtpOut(): number {
+    return this.mtpRows - 1;
   }
 
   /**
-   * MTP cell drawn in column t: the block output (last stage) made at position t - 1, which guesses
-   * the token after t, the same token as every layer in column t; -1 for the first column
+   * MTP cell drawn in column t: stage s made at position t - 1, which guesses the token after t,
+   * the same token as every layer in column t; -1 for the first column
    */
-  mtpCell(t: number): number {
+  mtpCell(t: number, s = this.mtpOut): number {
     const r = this.res!;
-    return t < 1 ? -1 : (r.nMtp - 1) * r.nTokens + t - 1;
+    return t < 1 ? -1 : s * r.nTokens + t - 1;
   }
 
-  /** draft columns after the prompt: the MTP block chains its own guesses, only the MTP row has cells there */
+  /** draft columns after the prompt: the MTP block chains its own guesses, only the MTP rows have cells there */
   get draftCols(): number {
     return this.mtpRows && this.res!.nDraft > 0 ? this.res!.nDraft : 0;
   }
@@ -120,11 +132,11 @@ export class Heatmap {
     return this.res ? this.res.nTokens + this.draftCols : 0;
   }
 
-  /** MTP row cell in column t, from the prompt run or, past the prompt, from the draft; null for an empty cell */
-  mtpAt(t: number): { ids: Int32Array; probs: Float32Array; entropy: Float32Array; c: number } | null {
+  /** MTP cell of stage s in column t, from the prompt run or, past the prompt, from the draft; null for an empty cell */
+  mtpAt(t: number, s = this.mtpOut): { ids: Int32Array; probs: Float32Array; entropy: Float32Array; c: number } | null {
     const r = this.res!;
-    if (t >= r.nTokens) return t < this.nCols ? { ids: r.draftTopIds, probs: r.draftTopProbs, entropy: r.draftEntropy, c: (r.nMtp - 1) * r.nDraft + t - r.nTokens } : null;
-    const c = this.mtpCell(t);
+    if (t >= r.nTokens) return t < this.nCols ? { ids: r.draftTopIds, probs: r.draftTopProbs, entropy: r.draftEntropy, c: s * r.nDraft + t - r.nTokens } : null;
+    const c = this.mtpCell(t, s);
     return c < 0 || r.mtpTopIds[c * r.k] < 0 ? null : { ids: r.mtpTopIds, probs: r.mtpTopProbs, entropy: r.mtpEntropy, c };
   }
 
@@ -134,20 +146,20 @@ export class Heatmap {
     return t < r.nTokens ? r.tokens[t] : r.draftTokens[t - r.nTokens];
   }
 
-  /** top of a row; layer nLayers is the MTP row */
+  /** top of a row; layer nLayers + s is MTP stage s, the output stage on top */
   rowY(layer: number): number {
     const r = this.res!;
-    if (layer >= r.nLayers) return TOP;
-    return TOP + this.mtpRows * (CELL_H + MTP_GAP) + (r.nLayers - 1 - layer) * CELL_H;
+    if (layer >= r.nLayers) return TOP + (r.nLayers + this.mtpRows - 1 - layer) * CELL_H;
+    return TOP + (this.mtpRows ? this.mtpRows * CELL_H + MTP_GAP : 0) + (r.nLayers - 1 - layer) * CELL_H;
   }
 
   setResult(res: LogitLensResult) {
     this.res = res;
     let m = 0;
     for (const h of res.entropy) m = Math.max(m, h);
-    // one entropy scale for the layers and the MTP row
-    for (let t = 0; res.nMtp > 0 && t < res.nTokens; t++) m = Math.max(m, res.mtpEntropy[(res.nMtp - 1) * res.nTokens + t]);
-    for (let j = 0; res.nMtp > 0 && j < res.nDraft; j++) m = Math.max(m, res.draftEntropy[(res.nMtp - 1) * res.nDraft + j]);
+    // one entropy scale for the layers and all MTP stages; the last prompt column has no MTP cell
+    for (let c = 0; c < res.nMtp * res.nTokens; c++) if (res.mtpTopIds[c * res.k] >= 0) m = Math.max(m, res.mtpEntropy[c]);
+    for (let c = 0; res.nMtp > 0 && c < res.nMtp * res.nDraft; c++) m = Math.max(m, res.draftEntropy[c]);
     this.maxEntropy = m || 1;
     m = 0;
     for (const d of res.kl) m = Math.max(m, d);
@@ -191,8 +203,8 @@ export class Heatmap {
   }
 
   /** MTP cells have no KL and no word probabilities, so those modes draw them neutral (null) */
-  mtpColor(t: number, mode: ColorMode): { fill: string; ink: string } | null {
-    const m = this.mtpAt(t);
+  mtpColor(t: number, s: number, mode: ColorMode): { fill: string; ink: string } | null {
+    const m = this.mtpAt(t, s);
     if (!m) return null;
     if (mode === 'prob') return rampColor(m.probs[m.c * this.res!.k]);
     if (mode === 'entropy') return rampColor(m.entropy[m.c] / this.maxEntropy);
@@ -207,14 +219,32 @@ export class Heatmap {
     const x = clientX - rect.left - LEFT;
     const y = clientY - rect.top - TOP;
     const pos = Math.floor(x / CELL_W);
-    if (x < 0 || y < 0 || pos >= this.nCols) return null;
-    if (this.mtpRows) {
-      if (y < CELL_H) return { layer: r.nLayers, pos };
-      if (y < CELL_H + MTP_GAP || pos >= r.nTokens) return null;
-    }
-    const layer = r.nLayers - 1 - Math.floor((y - this.mtpRows * (CELL_H + MTP_GAP)) / CELL_H);
-    if (layer < 0 || layer >= r.nLayers) return null;
+    if (x < 0 || pos >= this.nCols) return null;
+    const layer = this.rowAt(y);
+    // only the MTP rows reach into the draft columns
+    if (layer === null || (layer < r.nLayers && pos >= r.nTokens)) return null;
     return { layer, pos };
+  }
+
+  /** row under y (relative to TOP), null in the gap or outside */
+  private rowAt(y: number): number | null {
+    const r = this.res!;
+    if (y < 0) return null;
+    const top = this.mtpRows ? this.mtpRows * CELL_H + MTP_GAP : 0;
+    if (y < this.mtpRows * CELL_H) return r.nLayers + this.mtpRows - 1 - Math.floor(y / CELL_H);
+    if (y < top) return null;
+    const layer = r.nLayers - 1 - Math.floor((y - top) / CELL_H);
+    return layer < 0 ? null : layer;
+  }
+
+  /** full name for an axis label under the pointer, for the axis title; the MTP labels are short */
+  axisTitle(clientY: number): string {
+    const r = this.res;
+    if (!r) return '';
+    const l = this.rowAt(clientY - this.axis.getBoundingClientRect().top - TOP);
+    if (l === null) return '';
+    if (l >= r.nLayers) return `MTP block, ${MTP_STAGE_NAMES[l - r.nLayers] ?? l - r.nLayers}`;
+    return l === 0 ? 'Embeddings' : `Layer ${layerLabel(l)}`;
   }
 
   /**
@@ -288,7 +318,7 @@ export class Heatmap {
       ctx.globalAlpha = 1;
     }
     if (this.draftCols) this.drawDraftBand(v);
-    if (this.mtpRows) this.drawMtp(opts.mode, Math.max(0, Math.min(1, rows - r.nLayers)), fromCol, v);
+    if (this.mtpRows) this.drawMtp(opts.mode, rows, fromCol, v);
 
     // input tokens along the bottom
     ctx.font = `400 condensed 12px ${FONT}`;
@@ -338,7 +368,7 @@ export class Heatmap {
     }
   }
 
-  /** draft columns: a sunk band over the layer rows, with a label, since only the MTP row has cells there */
+  /** draft columns: a sunk band over the layer rows, with a label, since only the MTP rows have cells there */
   private drawDraftBand(v: (name: string) => string) {
     const r = this.res!;
     const ctx = this.ctx;
@@ -355,51 +385,60 @@ export class Heatmap {
     for (let j = 0; j < this.draftCols; j++) ctx.fillText(`draft ${j + 1}`, x0 + j * CELL_W + 6, y0 + CELL_H / 2 + 0.5);
   }
 
-  /** the MTP row above a thin rule; its first cell stays empty, there is no earlier position to guess from */
-  private drawMtp(mode: ColorMode, alpha: number, fromCol: number, v: (name: string) => string) {
+  /**
+   * the MTP stage rows above a thin rule, block output on top; the reveal goes on upward through the stages.
+   * The first cell of each stage stays empty, there is no earlier position to guess from.
+   */
+  private drawMtp(mode: ColorMode, rows: number, fromCol: number, v: (name: string) => string) {
     const r = this.res!;
     const ctx = this.ctx;
-    const ruleY = TOP + CELL_H + MTP_GAP / 2;
+    const ruleY = TOP + this.mtpRows * CELL_H + MTP_GAP / 2;
     ctx.fillStyle = v('--rule');
     ctx.fillRect(LEFT + 1, ruleY - 0.5, this.nCols * CELL_W - 2, 1);
-    for (let t = 0; t < this.nCols; t++) {
-      ctx.globalAlpha = t < fromCol ? 1 : alpha;
-      if (ctx.globalAlpha <= 0) continue;
-      const x = LEFT + t * CELL_W;
-      const m = this.mtpAt(t);
-      const id = m ? m.ids[m.c * r.k] : -1;
-      ctx.beginPath();
-      ctx.roundRect(x + 1.5, TOP + 1.5, CELL_W - 3, CELL_H - 3, 3);
-      if (id < 0) {
-        ctx.setLineDash([3, 3]);
-        ctx.strokeStyle = v('--rule');
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        continue;
-      }
-      const col = this.mtpColor(t, mode);
-      ctx.fillStyle = col ? col.fill : v('--sunk');
-      ctx.fill();
-      ctx.fillStyle = col ? col.ink : v('--ink-2');
-      ctx.font = `500 condensed 12px ${FONT}`;
-      ctx.textAlign = 'left';
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x + 4, TOP, CELL_W - 8, CELL_H);
-      ctx.clip();
-      ctx.fillText(showPiece(r.pieces.get(id)), x + 5, TOP + CELL_H / 2 + 0.5);
-      ctx.restore();
-      // drafted cells get a dashed outline, they come from the block's own earlier guess
-      if (t >= r.nTokens) {
+    for (let s = 0; s < this.mtpRows; s++) {
+      const y = this.rowY(r.nLayers + s);
+      const alpha = Math.max(0, Math.min(1, rows - r.nLayers - s));
+      for (let t = 0; t < this.nCols; t++) {
+        ctx.globalAlpha = t < fromCol ? 1 : alpha;
+        if (ctx.globalAlpha <= 0) continue;
+        const x = LEFT + t * CELL_W;
+        const m = this.mtpAt(t, s);
+        const id = m ? m.ids[m.c * r.k] : -1;
         ctx.beginPath();
-        ctx.roundRect(x + 0.5, TOP + 0.5, CELL_W - 1, CELL_H - 1, 3.5);
-        ctx.setLineDash([3, 2]);
-        ctx.strokeStyle = v('--ink');
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.roundRect(x + 1.5, y + 1.5, CELL_W - 3, CELL_H - 3, 3);
+        if (id < 0) {
+          ctx.setLineDash([3, 3]);
+          ctx.strokeStyle = v('--rule');
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          continue;
+        }
+        const col = this.mtpColor(t, s, mode);
+        ctx.fillStyle = col ? col.fill : v('--sunk');
+        ctx.fill();
+        ctx.fillStyle = col ? col.ink : v('--ink-2');
+        ctx.font = `500 condensed 12px ${FONT}`;
+        ctx.textAlign = 'left';
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x + 4, y, CELL_W - 8, CELL_H);
+        ctx.clip();
+        ctx.fillText(showPiece(r.pieces.get(id)), x + 5, y + CELL_H / 2 + 0.5);
+        ctx.restore();
       }
+    }
+    // each draft column gets one dashed outline around its stages, they come from the block's own earlier guess
+    for (let t = r.nTokens; t < this.nCols; t++) {
+      ctx.globalAlpha = t < fromCol ? 1 : Math.max(0, Math.min(1, rows - r.nLayers - this.mtpRows + 1));
+      if (ctx.globalAlpha <= 0) continue;
+      ctx.beginPath();
+      ctx.roundRect(LEFT + t * CELL_W + 0.5, TOP + 0.5, CELL_W - 1, this.mtpRows * CELL_H - 1, 3.5);
+      ctx.setLineDash([3, 2]);
+      ctx.strokeStyle = v('--ink');
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.globalAlpha = 1;
   }
@@ -426,10 +465,14 @@ export class Heatmap {
       if (r.nLayers > 16 && l % 2 !== 0 && l !== r.nLayers - 1) continue;
       ctx.fillText(layerLabel(l), AXIS_W - 5, this.rowY(l) + CELL_H / 2);
     }
-    if (this.mtpRows) {
-      ctx.font = `600 condensed 11px ${FONT}`;
-      ctx.fillText('MTP', AXIS_W - 5, TOP + CELL_H / 2);
+    // MTP stages: the block output in bold, the earlier stages lighter
+    for (let s = 0; s < this.mtpRows; s++) {
+      const out = s === this.mtpOut;
+      ctx.font = `${out ? 600 : 400} condensed 11px ${FONT}`;
+      ctx.globalAlpha = out ? 1 : 0.8;
+      ctx.fillText(this.mtpRows > 1 ? (MTP_STAGE_LABELS[s] ?? String(s)) : 'MTP', AXIS_W - 5, this.rowY(r.nLayers + s) + CELL_H / 2);
     }
+    ctx.globalAlpha = 1;
   }
 
   /** axis and cells as one canvas, for export */
