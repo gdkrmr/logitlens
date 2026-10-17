@@ -5,8 +5,9 @@ import { Wllama, type LogitLensResult } from '@wllama/wllama';
 import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, MTP_STAGES, CELL_W, CELL_H, LEFT, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
+import { webGpuProblem } from './gpu';
 import { info, initGlossary } from './glossary';
-import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
+import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, SIMPLE_MODELS, type RepoInfo } from './hf';
 
 // shown when the search box is empty
 // hint: download size of the file preselected by pickDefaultFile
@@ -33,6 +34,7 @@ const wordRadio = document.querySelector<HTMLInputElement>('input[name=color][va
 const contrastRadio = document.querySelector<HTMLInputElement>('input[name=color][value=contrast]')!;
 const exampleNote = $<HTMLParagraphElement>('example-note');
 const summaryEl = $<HTMLParagraphElement>('summary');
+const simpleLink = $<HTMLAnchorElement>('simple-link');
 
 // each one shows something at a glance in small models; the note says what to look for
 const EXAMPLES = [
@@ -526,6 +528,17 @@ function updateUrl() {
     if (draftCount() !== DRAFT_DEFAULT) q.set('draft', String(draftCount()));
   }
   history.replaceState(null, '', `${location.pathname}?${q}`);
+  syncSimpleLink();
+}
+
+/** the simple view knows only its own models; it gets the prompt, and the model if it is one of them */
+function syncSimpleLink() {
+  // before a load, the model the page was opened with
+  const model = wllama.isModelLoaded() ? loadedUrl : directUrl;
+  const simple = new URLSearchParams();
+  if (model && SIMPLE_MODELS.some((m) => m.url === model)) simple.set('model', model);
+  if (promptEl.value) simple.set('prompt', promptEl.value);
+  simpleLink.href = `./${simple.size ? `?${simple}` : ''}`;
 }
 
 /** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */
@@ -1186,39 +1199,7 @@ themeInputs.forEach((input) => {
   input.addEventListener('change', () => applyTheme(input.value));
 });
 
-/**
- * why WebGPU is not usable, or null. navigator.gpu alone is not enough: Chromium on Linux often has it but gives no
- * adapter, only the SwiftShader software one, or one that never answers; llama.cpp also needs shader-f16
- */
-async function webGpuProblem(): Promise<string | null> {
-  if (!wllama.isSupportWebGPU()) return 'no WebGPU';
-  const gpu = (navigator as any).gpu;
-  const TIMEOUT = Symbol('timeout');
-  const within = <T>(p: Promise<T>): Promise<T | typeof TIMEOUT> => {
-    let timer = 0;
-    const late = new Promise<typeof TIMEOUT>((r) => (timer = window.setTimeout(() => r(TIMEOUT), 5000)));
-    return Promise.race([p, late]).finally(() => clearTimeout(timer));
-  };
-  try {
-    const adapter: any = await within(gpu.requestAdapter());
-    if (adapter === TIMEOUT) return 'the graphics driver did not answer';
-    if (!adapter) return 'no graphics card available to WebGPU';
-    if (adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter) return 'WebGPU offers only a software renderer';
-    if (!adapter.features.has('shader-f16')) return 'the graphics card lacks 16-bit float support';
-    const pending = adapter.requestDevice({ requiredFeatures: ['shader-f16'] });
-    const device: any = await within(pending);
-    if (device === TIMEOUT) {
-      // free the device if it still arrives
-      pending.then((d: any) => d?.destroy?.(), () => {});
-      return 'the graphics driver did not answer';
-    }
-    device.destroy();
-    return null;
-  } catch {
-    return 'the graphics card did not start';
-  }
-}
-const gpuChecked = webGpuProblem().then((problem) => {
+const gpuChecked = webGpuProblem(wllama).then((problem) => {
   if (!problem) return;
   useGpu.checked = false;
   useGpu.disabled = true;
@@ -1267,6 +1248,7 @@ promptEl.addEventListener('input', () => {
   }
   examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
   exampleNote.textContent = '';
+  syncSimpleLink();
 });
 
 // set by the deploy workflow for non-main branches
@@ -1285,6 +1267,7 @@ timingsBox.open = window.matchMedia('(min-width: 861px)').matches;
 
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
+syncSimpleLink();
 // checked but disabled until a model with a chat template is loaded
 useChat.checked = urlParams.get('chat') === '1';
 reply = (useChat.checked && urlParams.get('reply')) || '';

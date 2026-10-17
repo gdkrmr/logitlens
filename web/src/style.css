@@ -118,6 +118,13 @@ body {
   letter-spacing: -0.02em;
   margin: 0;
 }
+.view-switch {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.view-switch a {
+  color: var(--ink-2);
+}
 .tagline {
   color: var(--ink-2);
   margin: 10px 0 0;
