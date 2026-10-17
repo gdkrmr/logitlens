@@ -421,6 +421,7 @@ let loadedUrl: string | null = null; // null for local files, which cannot be sh
 btnCancel.onclick = () => loadCtl?.abort();
 
 async function load(source: { url: string } | { files: File[] }) {
+  await gpuChecked;
   setBusy(true);
   const ctl = (loadCtl = new AbortController());
   const fromCache = 'url' in source && cachedUrls.has(source.url);
@@ -497,6 +498,11 @@ async function load(source: { url: string } | { files: File[] }) {
     modelStatus.textContent = `${name} is ready. It has ${info.n_layer} layers. Loaded in ${fmtMs(loadMs!)} (${arch}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}).`;
   } catch (e) {
     const kept = wllama.isModelLoaded() ? ' The previous model is still loaded.' : '';
+    // a failed load leaves the worker started; without a fresh instance the next load fails with "already initialized"
+    if (!wllama.isModelLoaded()) {
+      await wllama.exit().catch(() => {});
+      wllama = new Wllama(WASM, { suppressNativeLog: true });
+    }
     modelStatus.textContent = ctl.signal.aborted ? `Download cancelled.${kept}` : `Could not load the model: ${(e as Error).message}`;
   } finally {
     loadCtl = null;
@@ -1180,11 +1186,44 @@ themeInputs.forEach((input) => {
   input.addEventListener('change', () => applyTheme(input.value));
 });
 
-if (!wllama.isSupportWebGPU()) {
+/**
+ * why WebGPU is not usable, or null. navigator.gpu alone is not enough: Chromium on Linux often has it but gives no
+ * adapter, only the SwiftShader software one, or one that never answers; llama.cpp also needs shader-f16
+ */
+async function webGpuProblem(): Promise<string | null> {
+  if (!wllama.isSupportWebGPU()) return 'no WebGPU';
+  const gpu = (navigator as any).gpu;
+  const TIMEOUT = Symbol('timeout');
+  const within = <T>(p: Promise<T>): Promise<T | typeof TIMEOUT> => {
+    let timer = 0;
+    const late = new Promise<typeof TIMEOUT>((r) => (timer = window.setTimeout(() => r(TIMEOUT), 5000)));
+    return Promise.race([p, late]).finally(() => clearTimeout(timer));
+  };
+  try {
+    const adapter: any = await within(gpu.requestAdapter());
+    if (adapter === TIMEOUT) return 'the graphics driver did not answer';
+    if (!adapter) return 'no graphics card available to WebGPU';
+    if (adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter) return 'WebGPU offers only a software renderer';
+    if (!adapter.features.has('shader-f16')) return 'the graphics card lacks 16-bit float support';
+    const pending = adapter.requestDevice({ requiredFeatures: ['shader-f16'] });
+    const device: any = await within(pending);
+    if (device === TIMEOUT) {
+      // free the device if it still arrives
+      pending.then((d: any) => d?.destroy?.(), () => {});
+      return 'the graphics driver did not answer';
+    }
+    device.destroy();
+    return null;
+  } catch {
+    return 'the graphics card did not start';
+  }
+}
+const gpuChecked = webGpuProblem().then((problem) => {
+  if (!problem) return;
   useGpu.checked = false;
   useGpu.disabled = true;
-  modelStatus.textContent = 'This browser cannot use the graphics card (no WebGPU), so the model runs on the main processor. That is slower, but works.';
-}
+  if (!wllama.isModelLoaded()) modelStatus.textContent = `This browser cannot use the graphics card (${problem}), so the model runs on the main processor. That is slower, but works.`;
+});
 // the options disclosure remembers its state per browser
 try {
   modelOptions.open = localStorage.getItem('modelOptions') === 'open';
