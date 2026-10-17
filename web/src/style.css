@@ -545,7 +545,7 @@ progress {
 .lens-table td.none {
   color: var(--ink-3);
 }
-/* draft columns: past the prompt, only the MTP row has cells */
+/* draft columns: past the prompt, only the MTP rows have cells */
 .lens-table th.draft {
   font-style: italic;
   border-bottom-style: dashed;

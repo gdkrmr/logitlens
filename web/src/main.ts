@@ -2,7 +2,7 @@ import '@fontsource-variable/martian-mono/wdth.css';
 import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
 import './style.css';
 import { Wllama, type LogitLensResult } from '@wllama/wllama';
-import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, MTP_STAGE_LABELS, MTP_STAGE_NAMES, CELL_W, CELL_H, LEFT, type ColorMode } from './heatmap';
+import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, MTP_STAGES, CELL_W, CELL_H, LEFT, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
 import { info, initGlossary } from './glossary';
@@ -669,9 +669,7 @@ btnExportJson.onclick = () => {
   download(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), `${fileStem()}.json`);
 };
 
-const MTP_STAGES = ['after eh_proj', 'after attention', 'block output'];
-
-/** MTP stages for the JSON export; the heatmap row is the last stage */
+/** MTP stages for the JSON export, one heatmap row each */
 function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
   const stages = [];
   for (let s = 0; s < r.nMtp; s++) {
@@ -686,7 +684,7 @@ function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
       for (let j = 0; j < r.k; j++) top.push({ token: piece(r.mtpTopIds[c * r.k + j]), id: r.mtpTopIds[c * r.k + j], prob: r.mtpTopProbs[c * r.k + j] });
       cells.push({ top, entropy: r.mtpEntropy[c] });
     }
-    stages.push({ stage: MTP_STAGES[s] ?? String(s), cells });
+    stages.push({ stage: MTP_STAGES[s].name, cells });
   }
   return {
     note: 'MTP (NextN) block, teacher-forced: cells[t] reads the final hidden state at token t and the embedding of token t+1, and guesses token t+2; the last cell is null (no token t+1 in the prompt); the heatmap draws cells[t] in column t+1, next to the layers that guess the same token; entropy in nats',
@@ -694,7 +692,7 @@ function exportMtp(r: LogitLensResult, piece: (id: number) => string) {
   };
 }
 
-/** drafted tokens past the prompt, per MTP stage; the heatmap shows the last stage */
+/** drafted tokens past the prompt, per MTP stage, as in the heatmap's draft columns */
 function exportDraft(r: LogitLensResult, piece: (id: number) => string) {
   const stages = [];
   for (let s = 0; s < r.nMtp; s++) {
@@ -705,7 +703,7 @@ function exportDraft(r: LogitLensResult, piece: (id: number) => string) {
       for (let i = 0; i < r.k; i++) top.push({ token: piece(r.draftTopIds[c * r.k + i]), id: r.draftTopIds[c * r.k + i], prob: r.draftTopProbs[c * r.k + i] });
       cells.push({ input: { token: piece(r.draftTokens[j]), id: r.draftTokens[j] }, top, entropy: r.draftEntropy[c] });
     }
-    stages.push({ stage: MTP_STAGES[s] ?? String(s), cells });
+    stages.push({ stage: MTP_STAGES[s].name, cells });
   }
   return {
     note: "chained MTP draft past the prompt, as in llama.cpp's MTP speculative decoding: step 0 reads the final hidden state at the last prompt token and tokens[0], the final layer's prediction there; step j > 0 reads the block's own output (after its head norm) from step j-1 and tokens[j], its top guess; tokens[j+1] is the top guess of step j",
@@ -827,11 +825,10 @@ function render(animate = false, fromCol = 0) {
         : `<span>Difference from the final layer (KL) ${info('kl')}</span><span>0</span><span class="bar" style="background:${rampGradientCss(true)}"></span><span>${heatmap.maxKl.toFixed(1)} nats</span>`;
   if (mode === 'prob' || mode === 'entropy' || mode === 'kl') legend.innerHTML = `<span class="item">${scale}</span><span class="item"><span class="line"></span><span>From here up, the layer agrees with the final prediction</span></span>`;
   $('howto-mtp').hidden = !heatmap.mtpRows;
-  $('howto-mtp-stages').hidden = heatmap.mtpRows < 2;
+  $('howto-mtp-stages').hidden = !heatmap.mtpRows;
   if (heatmap.mtpRows) {
     const shaded = mode === 'prob' || mode === 'entropy';
-    const stages = heatmap.mtpRows > 1 ? `. Its steps, bottom to top: proj, attn, MTP output ${info('mtpstages')}` : '';
-    legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top ${heatmap.mtpRows > 1 ? 'rows' : 'row'}, MTP ${info('mtp')}: the same next token, guessed one position earlier${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`}${stages}</span></span>`;
+    legend.innerHTML += `<span class="item"><span class="mtp-key${shaded ? '' : ' neutral'}"></span><span>Top rows, MTP ${info('mtp')}: the same next token, guessed one position earlier${shaded ? '' : `, not shaded by ${mode === 'kl' ? 'KL' : 'word'}`}. Its steps, bottom to top: proj, attn, MTP output ${info('mtpstages')}</span></span>`;
     if (heatmap.draftCols) legend.innerHTML += `<span class="item"><span class="draft-key"></span><span>Draft columns: the MTP block guesses on from its own guesses ${info('draft')}</span></span>`;
   }
   $('howto-draft').hidden = !heatmap.draftCols;
@@ -856,8 +853,8 @@ function renderTable() {
   html += '</tr></thead><tbody>';
   // MTP stages, block output on top; the rule goes under the lowest one
   for (let s = heatmap.mtpRows - 1; s >= 0; s--) {
-    const label = heatmap.mtpRows > 1 ? MTP_STAGE_LABELS[s] : 'MTP';
-    const title = `MTP block${heatmap.mtpRows > 1 ? `, ${MTP_STAGE_NAMES[s]}` : ''}: the same next token, guessed one position earlier`;
+    const label = MTP_STAGES[s].label;
+    const title = `MTP block, ${MTP_STAGES[s].name}: the same next token, guessed one position earlier`;
     html += `<tr class="mtp-row${s === 0 ? ' mtp-last' : ''}"><th scope="row" title="${title}">${label}</th>`;
     for (let t = 0; t < heatmap.nCols; t++) {
       const m = heatmap.mtpAt(t, s);
@@ -923,15 +920,9 @@ function showMtpTooltip(s: number, pos: number, x: number, y: number) {
   placeTooltip(x, y);
 }
 
-/** stage s of the MTP block in plain words, for the tooltips; just "MTP" with a single MTP row */
+/** stage s of the MTP block in plain words, for the tooltips */
 function mtpStage(s: number): { head: string; foot: string } {
-  if (heatmap.mtpRows < 2) return { head: 'MTP', foot: '' };
-  const what = [
-    'Inside the MTP block, step 1 of 3: the earlier state just mixed with the new token, before the block looks at the text.',
-    'Inside the MTP block, step 2 of 3: after it looked back over the text (attention).',
-    'The MTP block output, after its last refining step.',
-  ];
-  return { head: s === heatmap.mtpOut ? 'MTP output' : `MTP ${MTP_STAGE_NAMES[s] ?? s}`, foot: `${what[s] ?? ''}<br>` };
+  return { head: s === heatmap.mtpOut ? 'MTP output' : `MTP ${MTP_STAGES[s].name}`, foot: `${MTP_STAGES[s].about}<br>` };
 }
 
 /** draft column: the MTP block read its own previous guess (x1: the final prediction) */
@@ -1048,7 +1039,11 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 canvas.addEventListener('pointerleave', () => (tooltip.hidden = true));
 // the axis labels are short (proj, attn); the title gives the full name
-heatmapAxis.addEventListener('pointermove', (ev) => (heatmapAxis.title = heatmap.axisTitle(ev.clientY)));
+heatmapAxis.addEventListener('pointermove', (ev) => {
+  const t = heatmap.axisTitle(ev.clientY);
+  if (heatmapAxis.title !== t) heatmapAxis.title = t;
+});
+heatmapAxis.addEventListener('pointerleave', () => (heatmapAxis.title = ''));
 // touch has no hover, so a tap also shows the cell's top 5
 let lastPointer = 'mouse';
 canvas.addEventListener('pointerdown', (ev) => (lastPointer = ev.pointerType));

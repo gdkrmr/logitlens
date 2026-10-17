@@ -60,9 +60,12 @@ export function showPiece(s: string | undefined): string {
 
 export const layerLabel = (l: number) => (l === 0 ? 'emb' : String(l - 1));
 
-/** MTP stages, bottom to top: short axis labels and full names */
-export const MTP_STAGE_LABELS = ['proj', 'attn', 'MTP'];
-export const MTP_STAGE_NAMES = ['after eh_proj', 'after attention', 'MTP output'];
+/** MTP stages, bottom to top: short axis label, full name (also in the JSON export), plain words for the tooltips */
+export const MTP_STAGES = [
+  { label: 'proj', name: 'after eh_proj', about: 'Inside the MTP block, step 1 of 3: the earlier state just mixed with the new token, before the block looks at the text.' },
+  { label: 'attn', name: 'after attention', about: 'Inside the MTP block, step 2 of 3: after it looked back over the text (attention).' },
+  { label: 'MTP', name: 'MTP output', about: 'The MTP block output, after its last refining step.' },
+];
 
 export interface HeatmapOpts {
   mode: ColorMode;
@@ -108,7 +111,7 @@ export class Heatmap {
     return this.res && this.res.nMtp > 0 ? this.res.nMtp : 0;
   }
 
-  /** the block output stage, used by the summary */
+  /** the block output stage, the top row; the default stage of mtpCell and mtpAt */
   get mtpOut(): number {
     return this.mtpRows - 1;
   }
@@ -164,7 +167,7 @@ export class Heatmap {
     for (const h of res.entropy) m = Math.max(m, h);
     // one entropy scale for the layers and all MTP stages; the last prompt column has no MTP cell
     for (let c = 0; c < res.nMtp * res.nTokens; c++) if (res.mtpTopIds[c * res.k] >= 0) m = Math.max(m, res.mtpEntropy[c]);
-    for (let c = 0; res.nMtp > 0 && c < res.nMtp * res.nDraft; c++) m = Math.max(m, res.draftEntropy[c]);
+    for (let c = 0; c < res.nMtp * res.nDraft; c++) m = Math.max(m, res.draftEntropy[c]);
     this.maxEntropy = m || 1;
     m = 0;
     for (const d of res.kl) m = Math.max(m, d);
@@ -208,9 +211,7 @@ export class Heatmap {
   }
 
   /** MTP cells have no KL and no word probabilities, so those modes draw them neutral (null) */
-  mtpColor(t: number, s: number, mode: ColorMode): { fill: string; ink: string } | null {
-    const m = this.mtpAt(t, s);
-    if (!m) return null;
+  mtpColor(m: NonNullable<ReturnType<Heatmap['mtpAt']>>, mode: ColorMode): { fill: string; ink: string } | null {
     if (mode === 'prob') return rampColor(m.probs[m.c * this.res!.k]);
     if (mode === 'entropy') return rampColor(m.entropy[m.c] / this.maxEntropy);
     return null;
@@ -248,7 +249,7 @@ export class Heatmap {
     if (!r) return '';
     const l = this.rowAt(clientY - this.axis.getBoundingClientRect().top - TOP);
     if (l === null) return '';
-    if (l >= r.nLayers) return `MTP block, ${MTP_STAGE_NAMES[l - r.nLayers] ?? l - r.nLayers}`;
+    if (l >= r.nLayers) return `MTP block, ${MTP_STAGES[l - r.nLayers].name}`;
     return l === 0 ? 'Embeddings' : `Layer ${layerLabel(l)}`;
   }
 
@@ -345,9 +346,9 @@ export class Heatmap {
       const y = this.rowY(0) + CELL_H + 15;
       const drafted = t > r.nTokens;
       ctx.font = drafted ? `italic 400 condensed 12px ${FONT}` : `400 condensed 12px ${FONT}`;
-      ctx.beginPath();
-      ctx.roundRect(x + 1.5, y - 9.5, CELL_W - 3, 19, 3);
       if (drafted) {
+        ctx.beginPath();
+        ctx.roundRect(x + 1.5, y - 9.5, CELL_W - 3, 19, 3);
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = v('--ink-3');
         ctx.lineWidth = 1;
@@ -414,7 +415,7 @@ export class Heatmap {
         const id = m ? m.ids[m.c * r.k] : -1;
         ctx.beginPath();
         ctx.roundRect(x + 1.5, y + 1.5, CELL_W - 3, CELL_H - 3, 3);
-        if (id < 0) {
+        if (!m || id < 0) {
           ctx.setLineDash([3, 3]);
           ctx.strokeStyle = v('--rule');
           ctx.lineWidth = 1;
@@ -422,7 +423,7 @@ export class Heatmap {
           ctx.setLineDash([]);
           continue;
         }
-        const col = this.mtpColor(t, s, mode);
+        const col = this.mtpColor(m, mode);
         ctx.fillStyle = col ? col.fill : v('--sunk');
         ctx.fill();
         ctx.fillStyle = col ? col.ink : v('--ink-2');
@@ -478,7 +479,7 @@ export class Heatmap {
       const out = s === this.mtpOut;
       ctx.font = `${out ? 600 : 400} condensed 11px ${FONT}`;
       ctx.globalAlpha = out ? 1 : 0.8;
-      ctx.fillText(this.mtpRows > 1 ? (MTP_STAGE_LABELS[s] ?? String(s)) : 'MTP', AXIS_W - 5, this.rowY(r.nLayers + s) + CELL_H / 2);
+      ctx.fillText(MTP_STAGES[s].label, AXIS_W - 5, this.rowY(r.nLayers + s) + CELL_H / 2);
     }
     ctx.globalAlpha = 1;
   }
