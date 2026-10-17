@@ -57,7 +57,6 @@ let loadedIdx = -1;
 let busy = false;
 let cached = new Set<string>();
 let loadCtl: AbortController | null = null;
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const pct = (p: number) => (p >= 0.995 ? '100%' : p < 0.001 ? '<0.1%' : `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`);
@@ -595,14 +594,9 @@ function show(r: LogitLensResult) {
   scrub.max = String(lens.nL - 1);
   scrub.disabled = false;
   btnPlay.disabled = false;
-  if (reducedMotion) {
-    lc = lens.nL - 1;
-    pause();
-    kick();
-  } else {
-    lc = 0;
-    play();
-  }
+  // always from the embedding up: the animation is the point of this view, even with reduced motion set
+  lc = 0;
+  play();
 }
 
 new ResizeObserver(() => {
