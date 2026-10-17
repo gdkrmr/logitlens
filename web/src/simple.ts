@@ -1,12 +1,11 @@
 // simple view: one model out of two, one prompt, and the guess for the next token animated through the layers
-import '@fontsource-variable/martian-mono/wdth.css';
-import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
-import './style.css';
-import './simple.css';
-import { Wllama, type LogitLensResult } from '@wllama/wllama';
+// loaded by simple-entry.ts, which also loads the styles and sends links for the advanced view there
+import type { LogitLensResult } from '@wllama/wllama';
 import { showPiece } from './heatmap';
 import { webGpuProblem } from './gpu';
 import { SIMPLE_MODELS, fmtBytes } from './hf';
+import { newWllama, unloaded, recovered, cachedModels, esc, pct, setBar, showPreviewBadge } from './common';
+import { modelParam } from './views';
 
 // each one has a clear answer that small models get right
 const EXAMPLES = [
@@ -24,11 +23,7 @@ const K = 10;
 const SHOWN = 5;
 
 const urlParams = new URLSearchParams(location.search);
-const modelParam = urlParams.get('model');
-const modelUrl = modelParam ? new URL(modelParam, location.href).href : null;
-// links with settings or models only the advanced view has go there
-const redirect = ['chat', 'reply', 'mtp', 'draft'].some((k) => urlParams.has(k)) || (!!modelUrl && !SIMPLE_MODELS.some((m) => m.url === modelUrl));
-if (redirect) location.replace(`advanced.html${location.search}`);
+const modelUrl = modelParam(urlParams);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const modelsEl = $<HTMLDivElement>('models');
@@ -50,16 +45,13 @@ const caption = $<HTMLParagraphElement>('caption');
 const btnPlay = $<HTMLButtonElement>('btn-play');
 const scrub = $<HTMLInputElement>('scrub');
 
-const WASM = { default: new URL('wasm/wllama.wasm', document.baseURI).href };
-let wllama = new Wllama(WASM, { suppressNativeLog: true });
+let wllama = newWllama();
 let modelIdx = Math.max(0, SIMPLE_MODELS.findIndex((m) => m.url === modelUrl));
 let loadedIdx = -1;
 let busy = false;
 let cached = new Set<string>();
 let loadCtl: AbortController | null = null;
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-const pct = (p: number) => (p >= 0.995 ? '100%' : p < 0.001 ? '<0.1%' : `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`);
 const clamp = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const ease = (x: number) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 
@@ -70,12 +62,7 @@ let gpuProblem: string | null = null;
 const gpuChecked = webGpuProblem(wllama).then((p) => (gpuProblem = p));
 
 async function refreshCache() {
-  try {
-    cached = new Set((await wllama.modelManager.getModels()).map((m) => m.url));
-  } catch {
-    // OPFS unavailable, no cache status
-    cached = new Set();
-  }
+  cached = new Set((await cachedModels(wllama)).map((m) => m.url));
 }
 
 function renderModels() {
@@ -96,23 +83,15 @@ function syncStatus() {
   const m = SIMPLE_MODELS[modelIdx];
   if (loadedIdx === modelIdx) modelStatus.textContent = `Ready, on the ${gpuProblem ? 'main processor' : 'graphics card'}.`;
   else if (cached.has(m.url)) modelStatus.textContent = `${m.note}. Loads from your browser on the first run.`;
-  else modelStatus.textContent = `${m.note}. The first run downloads ${fmtBytes(m.size)} once.`;
+  else modelStatus.textContent = `${m.note}. Press Run to download it (${fmtBytes(m.size)}, once).`;
 }
 
 function selectModel(i: number) {
   modelIdx = i;
   syncStatus();
   updateUrl();
-  // after a first run, a new model shows its own answer right away
-  if (res) run();
-}
-
-function setBar(fraction: number | null) {
-  progressBar.classList.toggle('indeterminate', fraction === null);
-  const p = fraction === null ? 0 : Math.round(fraction * 1000) / 10;
-  (progressBar.firstElementChild as HTMLElement).style.width = fraction === null ? '' : `${p}%`;
-  if (fraction === null) progressBar.removeAttribute('aria-valuenow');
-  else progressBar.setAttribute('aria-valuenow', String(p));
+  // after a first run, a model already in the browser shows its own answer right away; a download waits for Run
+  if (res && cached.has(SIMPLE_MODELS[i].url)) run();
 }
 
 btnCancel.onclick = () => loadCtl?.abort();
@@ -123,12 +102,15 @@ async function load(i: number) {
   const fromCache = cached.has(m.url);
   const ctl = (loadCtl = new AbortController());
   const setup = `Setting up the model${gpuProblem ? '' : ' and the graphics card'}; this takes a few seconds.`;
+  // the progress panel replaces the previous model's scene while it loads
   progress.hidden = false;
   intro.hidden = true;
+  svg.style.visibility = 'hidden';
+  caption.textContent = lastCaption = '';
   btnCancel.hidden = fromCache;
   progressPhase.textContent = fromCache ? `Loading ${m.name} from your browser` : `Downloading ${m.name}`;
   progressDetail.textContent = fromCache ? setup : 'Starting...';
-  setBar(fromCache ? null : 0);
+  setBar(progressBar, fromCache ? null : 0);
   const params = {
     n_ctx: 256,
     n_gpu_layers: gpuProblem ? 0 : 999,
@@ -139,9 +121,9 @@ async function load(i: number) {
         btnCancel.hidden = true;
         progressPhase.textContent = `Loading ${m.name}`;
         progressDetail.textContent = setup;
-        return setBar(null);
+        return setBar(progressBar, null);
       }
-      setBar(loaded / total);
+      setBar(progressBar, loaded / total);
       progressDetail.textContent = `${fmtBytes(loaded)} of ${fmtBytes(total)}. Kept in your browser for the next visit.`;
     },
   };
@@ -149,23 +131,17 @@ async function load(i: number) {
     // download completely before unloading the current model, so a cancelled download keeps it
     const input = await wllama.modelManager.getModelOrDownload({ url: m.url }, params);
     btnCancel.hidden = true;
-    if (wllama.isModelLoaded()) {
-      await wllama.exit();
-      wllama = new Wllama(WASM, { suppressNativeLog: true });
-    }
     loadedIdx = -1;
+    wllama = await unloaded(wllama);
     await wllama.loadModel(input, params);
     loadedIdx = i;
   } catch (e) {
-    // a failed load leaves the worker started; without a fresh instance the next load fails with "already initialized"
-    if (!wllama.isModelLoaded()) {
-      await wllama.exit().catch(() => {});
-      wllama = new Wllama(WASM, { suppressNativeLog: true });
-    }
+    wllama = await recovered(wllama);
     throw ctl.signal.aborted ? new Error('Download cancelled.') : e;
   } finally {
     loadCtl = null;
     progress.hidden = true;
+    svg.style.visibility = '';
     await refreshCache();
   }
 }
@@ -181,7 +157,8 @@ function setBusy(b: boolean) {
 /** prompt and model in the page URL, so the address bar is always a shareable link; the advanced view gets the same */
 function updateUrl() {
   const q = new URLSearchParams();
-  q.set('model', SIMPLE_MODELS[modelIdx].url);
+  // the loaded model, which the lens on screen comes from; the choice only once nothing is loaded
+  q.set('model', SIMPLE_MODELS[loadedIdx >= 0 ? loadedIdx : modelIdx].url);
   if (promptEl.value) q.set('prompt', promptEl.value);
   history.replaceState(null, '', `${location.pathname}?${q}`);
   advancedLink.href = `advanced.html?${q}`;
@@ -202,8 +179,10 @@ async function run() {
     show(r);
     updateUrl();
   } catch (e) {
-    caption.textContent = `Something went wrong: ${(e as Error).message}`;
-    if (!res) intro.hidden = false;
+    // a cancelled download keeps the previous model: go back to it; if it is gone, so is its result
+    if (loadedIdx >= 0) modelIdx = loadedIdx;
+    else clearScene();
+    caption.textContent = lastCaption = `Something went wrong: ${(e as Error).message}`;
   } finally {
     setBusy(false);
   }
@@ -463,8 +442,11 @@ function lcAt(t: number): number {
 function play() {
   if (!lens) return;
   if (lc >= lens.nL - 1 - 1e-3) lc = 0;
-  // continue from the current row
-  playStart = performance.now() / 1000 - (lc > 0 ? HOLD + lc * stepSec() : 0);
+  // continue from the current row: the inverse of lcAt, so the first frame does not jump
+  const i = Math.floor(lc);
+  const f = lc - i;
+  const g = f < 0.5 ? Math.sqrt(f / 2) : 1 - Math.sqrt(2 * (1 - f)) / 2;
+  playStart = performance.now() / 1000 - (lc > 0 ? HOLD + (i + g * 0.5) * stepSec() : 0);
   playing = true;
   btnPlay.textContent = 'Pause';
   kick();
@@ -599,6 +581,16 @@ function show(r: LogitLensResult) {
   play();
 }
 
+function clearScene() {
+  pause();
+  res = null;
+  lens = null;
+  scene = null;
+  svg.replaceChildren();
+  intro.hidden = false;
+  scrub.disabled = btnPlay.disabled = true;
+}
+
 new ResizeObserver(() => {
   if (!lens) return;
   build();
@@ -633,24 +625,15 @@ promptEl.addEventListener('input', () => {
   updateUrl();
 });
 
-// set by the deploy workflow for non-main branches
-const previewBranch = import.meta.env.VITE_BRANCH as string | undefined;
-if (previewBranch) {
-  const badge = $<HTMLParagraphElement>('preview-badge');
-  badge.innerHTML = `Preview of ${esc(previewBranch)} &middot; <a href="https://logitlens.gdkrmr.com/">main site</a>`;
-  badge.hidden = false;
-  document.title = `[${previewBranch}] ${document.title}`;
-}
+showPreviewBadge($('preview-badge'));
 
-if (!redirect) {
-  const promptParam = urlParams.get('prompt');
-  if (promptParam !== null) promptEl.value = promptParam;
-  promptEl.dispatchEvent(new Event('input'));
+const promptParam = urlParams.get('prompt');
+if (promptParam !== null) promptEl.value = promptParam;
+promptEl.dispatchEvent(new Event('input'));
+renderModels();
+syncStatus();
+refreshCache().then(() => {
   renderModels();
   syncStatus();
-  refreshCache().then(() => {
-    renderModels();
-    syncStatus();
-  });
-  gpuChecked.then(syncStatus);
-}
+});
+gpuChecked.then(syncStatus);
