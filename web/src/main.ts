@@ -1,12 +1,15 @@
 import '@fontsource-variable/martian-mono/wdth.css';
 import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
 import './style.css';
-import { Wllama, type LogitLensResult } from '@wllama/wllama';
+import type { LogitLensResult } from '@wllama/wllama';
 import { Heatmap, rampGradientCss, divergingGradientCss, showPiece, layerLabel, MTP_STAGES, CELL_W, CELL_H, LEFT, type ColorMode } from './heatmap';
 import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
+import { webGpuProblem } from './gpu';
+import { newWllama, unloaded, recovered, cachedModels, esc, pct, setBar as setBarOf, showPreviewBadge } from './common';
+import { modelParam, type AdvancedParam } from './views';
 import { info, initGlossary } from './glossary';
-import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, type RepoInfo } from './hf';
+import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, SIMPLE_MODELS, type RepoInfo } from './hf';
 
 // shown when the search box is empty
 // hint: download size of the file preselected by pickDefaultFile
@@ -20,11 +23,18 @@ const SUGGESTED: RepoInfo[] = [
 
 // ?model=<url> adds a direct-URL entry, e.g. a dev-served /local-models/... file
 const urlParams = new URLSearchParams(location.search);
-const directParam = urlParams.get('model');
-const directUrl = directParam ? new URL(directParam, location.href).href : null;
+const directUrl = modelParam(urlParams);
 // a shared Hugging Face link is shown as repo + quantization, parsed from the URL alone
 const directHf = directUrl ? /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\/main\/(.+)$/.exec(directUrl) : null;
 const DIRECT_ID = '(direct URL)';
+/** file name from a URL; as is when it holds a broken escape, e.g. from a truncated link */
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const examplesEl = $<HTMLDivElement>('examples');
@@ -33,6 +43,7 @@ const wordRadio = document.querySelector<HTMLInputElement>('input[name=color][va
 const contrastRadio = document.querySelector<HTMLInputElement>('input[name=color][value=contrast]')!;
 const exampleNote = $<HTMLParagraphElement>('example-note');
 const summaryEl = $<HTMLParagraphElement>('summary');
+const simpleLink = $<HTMLAnchorElement>('simple-link');
 
 // each one shows something at a glance in small models; the note says what to look for
 const EXAMPLES = [
@@ -98,8 +109,7 @@ const traceDesc = $<HTMLParagraphElement>('trace-desc');
 const traceChips = $<HTMLDivElement>('trace-chips');
 const tracePlot = $<HTMLDivElement>('trace-plot');
 
-const WASM = { default: new URL('wasm/wllama.wasm', document.baseURI).href };
-let wllama = new Wllama(WASM, { suppressNativeLog: true });
+let wllama = newWllama();
 const heatmapAxis = $<HTMLCanvasElement>('heatmap-axis');
 const heatmap = new Heatmap(canvas, heatmapAxis);
 let res: LogitLensResult | null = null;
@@ -133,8 +143,6 @@ const lensInput = () => (chatOn() ? chatFormat!.render(promptEl.value) + reply :
 
 const colorMode = (): ColorMode => (document.querySelector<HTMLInputElement>('input[name=color]:checked')!.value as ColorMode);
 const viewMode = () => document.querySelector<HTMLInputElement>('input[name=view]:checked')!.value;
-const pct = (p: number) => (p >= 0.995 ? '100%' : p < 0.001 ? '<0.1%' : `${(p * 100).toFixed(1)}%`);
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const piece = (id: number) => showPiece(res?.pieces.get(id));
 
 /////////////////////////////////////////////
@@ -184,15 +192,9 @@ function syncLoad() {
 }
 
 async function refreshCache() {
-  try {
-    const models = await wllama.modelManager.getModels();
-    cachedUrls = new Set(models.map((m) => m.url));
-    cachedBytes = models.reduce((a, m) => a + m.size, 0);
-  } catch {
-    // OPFS unavailable, no cache status
-    cachedUrls = new Set();
-    cachedBytes = 0;
-  }
+  const models = await cachedModels(wllama);
+  cachedUrls = new Set(models.map((m) => m.url));
+  cachedBytes = models.reduce((a, m) => a + m.size, 0);
   cacheRow.hidden = cachedUrls.size === 0;
   cacheInfo.textContent = `${cachedUrls.size} ${cachedUrls.size === 1 ? 'model' : 'models'} cached in this browser, ${fmtBytes(cachedBytes)}.`;
 }
@@ -217,7 +219,7 @@ function renderRepos() {
       if (repoHasCache(r.id) || (r.id === DIRECT_ID && cachedUrls.has(directUrl!))) meta.push('cached');
       const arch = r.arch ? `${r.arch}${supported ? '' : '?'}` : r.id === DIRECT_ID ? '' : 'unknown';
       b.innerHTML =
-        `<span class="name">${owner ? `<span class="owner">${esc(owner)}/</span>` : ''}${esc(decodeURIComponent(name))}</span>` +
+        `<span class="name">${owner ? `<span class="owner">${esc(owner)}/</span>` : ''}${esc(decode(name))}</span>` +
         `<span class="arch${supported ? '' : ' warn'}" title="${supported ? 'Architecture' : 'Architecture may be unsupported'}">${esc(arch)}</span>` +
         (meta.length ? `<span class="meta">${meta.join(' \u00b7 ')}</span>` : '');
       b.onclick = () => selectRepo(r);
@@ -271,7 +273,7 @@ async function selectRepo(r: RepoInfo) {
   quantRepo.textContent = r.id === DIRECT_ID ? (directHf ? `in ${directHf[1]}` : '') : `in ${r.id}`;
   const files =
     r.id === DIRECT_ID && directUrl
-      ? [{ path: decodeURIComponent(directUrl.split('/').pop()!), size: NaN, shards: 1, url: directUrl }]
+      ? [{ path: decode(directUrl.split('/').pop()!), size: NaN, shards: 1, url: directUrl }]
       : (PRESET_FILES[r.id] ?? null);
   if (!files) setQuantStatus('Listing files...');
   try {
@@ -406,13 +408,7 @@ async function refreshSelection() {
   syncLoad();
 }
 
-function setBar(fraction: number | null) {
-  loadBar.classList.toggle('indeterminate', fraction === null);
-  const pct = fraction === null ? 0 : Math.round(fraction * 1000) / 10;
-  (loadBar.firstElementChild as HTMLElement).style.width = fraction === null ? '' : `${pct}%`;
-  if (fraction === null) loadBar.removeAttribute('aria-valuenow');
-  else loadBar.setAttribute('aria-valuenow', String(pct));
-}
+const setBar = (fraction: number | null) => setBarOf(loadBar, fraction);
 
 const fmtDuration = (s: number) => (s < 60 ? `${Math.ceil(s)} s` : `${Math.floor(s / 60)} min ${Math.ceil(s % 60)} s`);
 
@@ -475,10 +471,7 @@ async function load(source: { url: string } | { files: File[] }) {
       // download completely before unloading the current model, so a cancelled download keeps it
       const input = 'url' in source ? await wllama.modelManager.getModelOrDownload({ url: source.url }, params) : source.files;
       btnCancel.hidden = true;
-      if (wllama.isModelLoaded()) {
-        await wllama.exit();
-        wllama = new Wllama(WASM, { suppressNativeLog: true });
-      }
+      wllama = await unloaded(wllama);
       await wllama.loadModel(input, params);
     } finally {
       loadMs = stop();
@@ -498,11 +491,7 @@ async function load(source: { url: string } | { files: File[] }) {
     modelStatus.textContent = `${name} is ready. It has ${info.n_layer} layers. Loaded in ${fmtMs(loadMs!)} (${arch}, ${wllama.isMultithread() ? `${wllama.getNumThreads()} threads` : 'single thread'}).`;
   } catch (e) {
     const kept = wllama.isModelLoaded() ? ' The previous model is still loaded.' : '';
-    // a failed load leaves the worker started; without a fresh instance the next load fails with "already initialized"
-    if (!wllama.isModelLoaded()) {
-      await wllama.exit().catch(() => {});
-      wllama = new Wllama(WASM, { suppressNativeLog: true });
-    }
+    wllama = await recovered(wllama);
     modelStatus.textContent = ctl.signal.aborted ? `Download cancelled.${kept}` : `Could not load the model: ${(e as Error).message}`;
   } finally {
     loadCtl = null;
@@ -516,16 +505,29 @@ async function load(source: { url: string } | { files: File[] }) {
 /** model and prompt in the page URL, so the address bar is always a shareable link */
 function updateUrl() {
   const q = new URLSearchParams();
+  // typed keys: a new setting must be added to ADVANCED_PARAMS, so the simple view sends its links here
+  const set = (k: AdvancedParam, v: string) => q.set(k, v);
   if (loadedUrl) q.set('model', loadedUrl.startsWith(location.origin) ? loadedUrl.slice(location.origin.length) : loadedUrl);
   if (promptEl.value) q.set('prompt', promptEl.value);
-  if (useChat.checked) q.set('chat', '1');
-  if (useChat.checked && reply) q.set('reply', reply);
+  if (useChat.checked) set('chat', '1');
+  if (useChat.checked && reply) set('reply', reply);
   // MTP settings only mean something for models with the block; before a load, keep what the link asked for
   if (modelHasMtp || !wllama.isModelLoaded()) {
-    if (!useMtp.checked) q.set('mtp', '0');
-    if (draftCount() !== DRAFT_DEFAULT) q.set('draft', String(draftCount()));
+    if (!useMtp.checked) set('mtp', '0');
+    if (draftCount() !== DRAFT_DEFAULT) set('draft', String(draftCount()));
   }
   history.replaceState(null, '', `${location.pathname}?${q}`);
+  syncSimpleLink();
+}
+
+/** the simple view knows only its own models; it gets the prompt, and the model if it is one of them */
+function syncSimpleLink() {
+  // before a load, the model the page was opened with
+  const model = wllama.isModelLoaded() ? loadedUrl : directUrl;
+  const simple = new URLSearchParams();
+  if (model && SIMPLE_MODELS.some((m) => m.url === model)) simple.set('model', model);
+  if (promptEl.value) simple.set('prompt', promptEl.value);
+  simpleLink.href = `./${simple.size ? `?${simple}` : ''}`;
 }
 
 /** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */
@@ -1186,39 +1188,7 @@ themeInputs.forEach((input) => {
   input.addEventListener('change', () => applyTheme(input.value));
 });
 
-/**
- * why WebGPU is not usable, or null. navigator.gpu alone is not enough: Chromium on Linux often has it but gives no
- * adapter, only the SwiftShader software one, or one that never answers; llama.cpp also needs shader-f16
- */
-async function webGpuProblem(): Promise<string | null> {
-  if (!wllama.isSupportWebGPU()) return 'no WebGPU';
-  const gpu = (navigator as any).gpu;
-  const TIMEOUT = Symbol('timeout');
-  const within = <T>(p: Promise<T>): Promise<T | typeof TIMEOUT> => {
-    let timer = 0;
-    const late = new Promise<typeof TIMEOUT>((r) => (timer = window.setTimeout(() => r(TIMEOUT), 5000)));
-    return Promise.race([p, late]).finally(() => clearTimeout(timer));
-  };
-  try {
-    const adapter: any = await within(gpu.requestAdapter());
-    if (adapter === TIMEOUT) return 'the graphics driver did not answer';
-    if (!adapter) return 'no graphics card available to WebGPU';
-    if (adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter) return 'WebGPU offers only a software renderer';
-    if (!adapter.features.has('shader-f16')) return 'the graphics card lacks 16-bit float support';
-    const pending = adapter.requestDevice({ requiredFeatures: ['shader-f16'] });
-    const device: any = await within(pending);
-    if (device === TIMEOUT) {
-      // free the device if it still arrives
-      pending.then((d: any) => d?.destroy?.(), () => {});
-      return 'the graphics driver did not answer';
-    }
-    device.destroy();
-    return null;
-  } catch {
-    return 'the graphics card did not start';
-  }
-}
-const gpuChecked = webGpuProblem().then((problem) => {
+const gpuChecked = webGpuProblem(wllama).then((problem) => {
   if (!problem) return;
   useGpu.checked = false;
   useGpu.disabled = true;
@@ -1267,16 +1237,10 @@ promptEl.addEventListener('input', () => {
   }
   examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
   exampleNote.textContent = '';
+  syncSimpleLink();
 });
 
-// set by the deploy workflow for non-main branches
-const previewBranch = import.meta.env.VITE_BRANCH as string | undefined;
-if (previewBranch) {
-  const badge = $<HTMLParagraphElement>('preview-badge');
-  badge.innerHTML = `Preview of branch ${esc(previewBranch)} &middot; <a href="https://logitlens.gdkrmr.com/">main site</a>`;
-  badge.hidden = false;
-  document.title = `[${previewBranch}] ${document.title}`;
-}
+showPreviewBadge($('preview-badge'));
 
 runStatus.textContent = idleHint;
 initGlossary();
@@ -1285,6 +1249,7 @@ timingsBox.open = window.matchMedia('(min-width: 861px)').matches;
 
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
+syncSimpleLink();
 // checked but disabled until a model with a chat template is loaded
 useChat.checked = urlParams.get('chat') === '1';
 reply = (useChat.checked && urlParams.get('reply')) || '';
