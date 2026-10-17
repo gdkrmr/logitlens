@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- adds the cross-origin isolation headers on hosts that cannot send them (GitHub Pages); no-op otherwise -->
+    <script src="coi-serviceworker.min.js"></script>
+    <title>Logit Lens</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="favicon-16.png" sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <meta name="description" content="Watch a language model's guess for the next word form, layer by layer. Runs in the browser with WebGPU." />
+    <script>
+      // apply the saved theme before first paint
+      try {
+        const t = localStorage.getItem('theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+    <script type="module" crossorigin src="./assets/main-CzEKexC8.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/style-CtRWZltT.js">
+    <link rel="modulepreload" crossorigin href="./assets/hf-qY85diJx.js">
+    <link rel="stylesheet" crossorigin href="./assets/style-C2CKfw9G.css">
+    <link rel="stylesheet" crossorigin href="./assets/main-DFwLGmw6.css">
+  </head>
+  <body>
+    <div class="sv">
+      <header class="sv-head">
+        <p class="wordmark">logit lens</p>
+        <p class="sv-tag">Watch a language model's guess for the next word form, layer by layer.</p>
+        <p id="preview-badge" class="preview-badge" hidden></p>
+        <a id="advanced-link" class="sv-adv" href="advanced.html">Advanced view &rarr;</a>
+      </header>
+
+      <section class="sv-controls" aria-label="Model and prompt">
+        <div class="sv-row">
+          <span class="label" id="model-h">Model</span>
+          <div id="models" class="sv-models" role="radiogroup" aria-labelledby="model-h"></div>
+          <p id="model-status" class="sv-status" role="status"></p>
+        </div>
+        <form id="prompt-form" class="sv-prompt">
+          <label class="sr-only" for="prompt">Prompt</label>
+          <input id="prompt" type="text" maxlength="600" autocomplete="off" spellcheck="false" value="The Eiffel Tower is located in the city of" />
+          <button id="btn-run" class="btn" type="submit">Run</button>
+        </form>
+        <div class="sv-row sv-examples">
+          <span class="label" id="examples-h">Try</span>
+          <div id="examples" class="examples-list" role="group" aria-labelledby="examples-h"></div>
+        </div>
+      </section>
+
+      <main id="stage" class="sv-stage">
+        <svg id="lens-svg" role="img" aria-label="The model's layers as a stack, with a lens reading the guess for the next token after each layer"></svg>
+        <div id="intro" class="sv-intro">
+          <p class="sv-intro-title">What happens between the prompt and the next word?</p>
+          <p>A language model passes your text through a stack of layers. Only the last one is meant to be read out, but the <strong>logit lens</strong> reads every layer the same way, and shows what the model would guess if it stopped there.</p>
+          <p>Pick a model, type a prompt or pick one, and press <strong>Run</strong>. The model runs in your browser; it is downloaded once and then kept.</p>
+        </div>
+        <div id="progress" class="sv-progress" hidden>
+          <p id="progress-phase" class="sv-progress-phase"></p>
+          <div id="progress-bar" class="bar" role="progressbar" aria-labelledby="progress-phase" aria-valuemin="0" aria-valuemax="100"><div class="bar-fill"></div></div>
+          <p id="progress-detail" class="load-detail"></p>
+          <button id="btn-cancel" type="button" class="btn btn-quiet">Cancel download</button>
+        </div>
+      </main>
+
+      <footer class="sv-foot">
+        <p id="caption" class="sv-caption"></p>
+        <div class="sv-player">
+          <button id="btn-play" type="button" class="btn btn-quiet" disabled>Play</button>
+          <label class="sr-only" for="scrub">Layer</label>
+          <input id="scrub" type="range" min="0" max="1" step="0.01" value="0" disabled />
+        </div>
+        <p class="legal">&copy; 2026 Guido Kraemer &middot; <a href="LICENSE.txt">MIT License</a> &middot; <a href="https://github.com/gdkrmr/logitlens">Source</a> &middot; <a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a> &middot; <a href="impressum.html" lang="de">Impressum &amp; Datenschutz</a></p>
+      </footer>
+    </div>
+  </body>
+</html>
