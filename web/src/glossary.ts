@@ -36,7 +36,12 @@ const TERMS: Record<string, { title: string; ask: string; text: string }> = {
   mtp: {
     title: 'MTP (multi-token prediction)',
     ask: 'What is MTP?',
-    text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead. Its guesses are used to speed up writing text. The MTP row puts each guess in the column of the word it guesses, so it lines up with the layers below; the first column is empty.',
+    text: 'An extra small block some models have. It takes the last layer and the next word, and guesses the word after that, two tokens ahead. Its guesses are used to speed up writing text. The MTP rows put each guess in the column of the word it guesses, so they line up with the layers below; the first column is empty.',
+  },
+  mtpstages: {
+    title: 'MTP steps (proj, attn, MTP)',
+    ask: 'What are the three MTP rows?',
+    text: 'The MTP block works in three steps, read from the bottom up. proj: it mixes the last layer with the next word. attn: it looks back over the text. MTP: it refines that into its output. Each row reads a guess out at that step, like the layer rows do, so you can watch the guess form.',
   },
   draft: {
     title: 'Draft tokens',
