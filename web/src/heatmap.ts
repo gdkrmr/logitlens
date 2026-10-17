@@ -140,10 +140,15 @@ export class Heatmap {
     return c < 0 || r.mtpTopIds[c * r.k] < 0 ? null : { ids: r.mtpTopIds, probs: r.mtpTopProbs, entropy: r.mtpEntropy, c };
   }
 
-  /** token under column t: the prompt token, or in a draft column the token that step drafts */
+  /** columns with a token label: one more than nCols with a draft, for the last drafted token */
+  get labelCols(): number {
+    return this.nCols + (this.draftCols ? 1 : 0);
+  }
+
+  /** input token of column t: the prompt token, or in a draft column the token the draft step reads */
   colToken(t: number): number {
     const r = this.res!;
-    return t < r.nTokens ? r.tokens[t] : r.draftTokens[t - r.nTokens + 1];
+    return t < r.nTokens ? r.tokens[t] : r.draftTokens[t - r.nTokens];
   }
 
   /** top of a row; layer nLayers + s is MTP stage s, the output stage on top */
@@ -271,7 +276,7 @@ export class Heatmap {
     const r = this.res;
     if (!r) return;
     if (rows === Infinity) cancelAnimationFrame(this.anim);
-    const w = LEFT + this.nCols * CELL_W + 4;
+    const w = LEFT + this.labelCols * CELL_W + 4;
     const h = this.rowY(0) + CELL_H + BOTTOM;
     // canvases wider than 32767 device px stay blank; long prompts trade sharpness for that
     const dpr = Math.min(window.devicePixelRatio || 1, 30000 / (w + AXIS_W));
@@ -334,23 +339,26 @@ export class Heatmap {
       ctx.fillText(showPiece(r.pieces.get(r.tokens[t])), x + 5, y);
       ctx.restore();
     }
-    // draft inputs: x1 is the final prediction, the rest are the MTP block's own guesses
-    ctx.font = `italic 400 condensed 12px ${FONT}`;
-    for (let t = r.nTokens; t < this.nCols; t++) {
+    // draft inputs: x1 is the final prediction, drawn like a prompt token; the rest, dashed, are the MTP block's own guesses
+    for (let t = r.nTokens; t < this.labelCols; t++) {
       const x = LEFT + t * CELL_W;
       const y = this.rowY(0) + CELL_H + 15;
+      const drafted = t > r.nTokens;
+      ctx.font = drafted ? `italic 400 condensed 12px ${FONT}` : `400 condensed 12px ${FONT}`;
       ctx.beginPath();
       ctx.roundRect(x + 1.5, y - 9.5, CELL_W - 3, 19, 3);
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = v('--ink-3');
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.setLineDash([]);
+      if (drafted) {
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = v('--ink-3');
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.save();
       ctx.beginPath();
       ctx.rect(x + 2, y - 10, CELL_W - 4, 20);
       ctx.clip();
-      ctx.fillStyle = v('--ink-3');
+      ctx.fillStyle = v(drafted ? '--ink-3' : '--ink-2');
       ctx.fillText(showPiece(r.pieces.get(this.colToken(t))), x + 5, y);
       ctx.restore();
     }

@@ -847,8 +847,12 @@ function renderTable() {
   const r = res!;
   let html = '<table class="lens-table"><thead><tr><th scope="col">Layer</th>';
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
-  // draft columns: header is the token that step drafts
-  for (let t = r.nTokens; t < heatmap.nCols; t++) html += `<th scope="col" class="tok draft" title="Draft ${t - r.nTokens + 1}: not in the prompt">${esc(piece(heatmap.colToken(t)))}</th>`;
+  // draft columns: header is the token the draft step reads, the first one the final prediction; one more column for the last drafted token
+  for (let t = r.nTokens; t < heatmap.labelCols; t++) {
+    const title = t === r.nTokens ? "The model's prediction after the prompt" : `Drafted by the MTP block in draft ${t - r.nTokens}: not in the prompt`;
+    html += `<th scope="col" class="tok${t > r.nTokens ? ' draft' : ''}" title="${title}">${esc(piece(heatmap.colToken(t)))}</th>`;
+  }
+  const tail = heatmap.draftCols ? '<td class="draft-empty"></td>' : '';
   html += '</tr></thead><tbody>';
   // MTP stages, block output on top; the rule goes under the lowest one
   for (let s = heatmap.mtpRows - 1; s >= 0; s--) {
@@ -860,7 +864,7 @@ function renderTable() {
       const cls = t >= r.nTokens ? ' class="draft"' : '';
       html += !m ? '<td class="none">\u2013</td>' : `<td${cls}><span class="tok">${esc(piece(m.ids[m.c * r.k]))}</span><span class="p">${pct(m.probs[m.c * r.k])}</span></td>`;
     }
-    html += '</tr>';
+    html += tail + '</tr>';
   }
   for (let l = r.nLayers - 1; l >= 0; l--) {
     html += `<tr><th scope="row">${layerLabel(l)}</th>`;
@@ -868,7 +872,7 @@ function renderTable() {
       const c = (l * r.nTokens + t) * r.k;
       html += `<td><span class="tok">${esc(piece(r.topIds[c]))}</span><span class="p">${pct(r.topProbs[c])}</span></td>`;
     }
-    html += '<td class="draft-empty"></td>'.repeat(heatmap.draftCols) + '</tr>';
+    html += '<td class="draft-empty"></td>'.repeat(heatmap.draftCols) + tail + '</tr>';
   }
   tableWrap.innerHTML = html + '</tbody></table>';
 }
