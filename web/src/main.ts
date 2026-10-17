@@ -422,6 +422,7 @@ btnCancel.onclick = () => loadCtl?.abort();
 
 async function load(source: { url: string } | { files: File[] }) {
   setBusy(true);
+  await gpuChecked;
   const ctl = (loadCtl = new AbortController());
   const fromCache = 'url' in source && cachedUrls.has(source.url);
   const host = 'url' in source ? new URL(source.url).host : '';
@@ -479,6 +480,12 @@ async function load(source: { url: string } | { files: File[] }) {
         wllama = new Wllama(WASM, { suppressNativeLog: true });
       }
       await wllama.loadModel(input, params);
+      // wllama resolves even when llama.cpp rejects the file
+      if ((wllama.getLoadedContextInfo() as { success?: boolean }).success === false) {
+        await wllama.exit();
+        wllama = new Wllama(WASM, { suppressNativeLog: true });
+        throw new Error('llama.cpp could not read this file.');
+      }
     } finally {
       loadMs = stop();
     }
@@ -1180,11 +1187,33 @@ themeInputs.forEach((input) => {
   input.addEventListener('change', () => applyTheme(input.value));
 });
 
-if (!wllama.isSupportWebGPU()) {
+/**
+ * why WebGPU is not usable, or null. navigator.gpu alone is not enough: Chromium on Linux often has it but gives no
+ * adapter, only the SwiftShader software one, or one that never answers; llama.cpp also needs shader-f16
+ */
+async function webGpuProblem(): Promise<string | null> {
+  if (!wllama.isSupportWebGPU()) return 'no WebGPU';
+  const gpu = (navigator as any).gpu;
+  const within = <T>(p: Promise<T>): Promise<T | null> => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 5000))]);
+  try {
+    const adapter: any = await within(gpu.requestAdapter());
+    if (!adapter) return 'no graphics card available to WebGPU';
+    if (adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter) return 'WebGPU offers only a software renderer';
+    if (!adapter.features.has('shader-f16')) return 'the graphics card lacks 16-bit float support';
+    const device: any = await within(adapter.requestDevice({ requiredFeatures: ['shader-f16'] }));
+    if (!device) return 'the graphics card did not start';
+    device.destroy();
+    return null;
+  } catch {
+    return 'the graphics card did not start';
+  }
+}
+const gpuChecked = webGpuProblem().then((problem) => {
+  if (!problem) return;
   useGpu.checked = false;
   useGpu.disabled = true;
-  modelStatus.textContent = 'This browser cannot use the graphics card (no WebGPU), so the model runs on the main processor. That is slower, but works.';
-}
+  if (!wllama.isModelLoaded()) modelStatus.textContent = `This browser cannot use the graphics card (${problem}), so the model runs on the main processor. That is slower, but works.`;
+});
 // the options disclosure remembers its state per browser
 try {
   modelOptions.open = localStorage.getItem('modelOptions') === 'open';
