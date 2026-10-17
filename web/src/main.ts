@@ -847,7 +847,7 @@ function renderTable() {
   const r = res!;
   let html = '<table class="lens-table"><thead><tr><th scope="col">Layer</th>';
   for (let t = 0; t < r.nTokens; t++) html += `<th scope="col" class="tok">${esc(piece(r.tokens[t]))}</th>`;
-  // draft columns: header is the token the draft step reads
+  // draft columns: header is the token that step drafts
   for (let t = r.nTokens; t < heatmap.nCols; t++) html += `<th scope="col" class="tok draft" title="Draft ${t - r.nTokens + 1}: not in the prompt">${esc(piece(heatmap.colToken(t)))}</th>`;
   html += '</tr></thead><tbody>';
   // MTP stages, block output on top; the rule goes under the lowest one

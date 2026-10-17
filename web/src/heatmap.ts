@@ -140,10 +140,10 @@ export class Heatmap {
     return c < 0 || r.mtpTopIds[c * r.k] < 0 ? null : { ids: r.mtpTopIds, probs: r.mtpTopProbs, entropy: r.mtpEntropy, c };
   }
 
-  /** input token of column t: the prompt token, or in a draft column the token the draft step reads */
+  /** token under column t: the prompt token, or in a draft column the token that step drafts */
   colToken(t: number): number {
     const r = this.res!;
-    return t < r.nTokens ? r.tokens[t] : r.draftTokens[t - r.nTokens];
+    return t < r.nTokens ? r.tokens[t] : r.draftTokens[t - r.nTokens + 1];
   }
 
   /** top of a row; layer nLayers + s is MTP stage s, the output stage on top */
