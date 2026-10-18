@@ -89,7 +89,7 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.sv-models label:has(input:disabled) {
+.sv-models[aria-busy='true'] label {
   cursor: default;
   opacity: 0.6;
 }

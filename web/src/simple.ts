@@ -65,18 +65,30 @@ async function refreshCache() {
   cached = new Set((await cachedModels(wllama)).map((m) => m.url));
 }
 
+// built once and updated in place, and never disabled (that blurs them), so the radio with keyboard focus keeps it
+const modelInputs = SIMPLE_MODELS.map((m, i) => {
+  const label = document.createElement('label');
+  label.title = `${m.repo}, ${m.file}`;
+  const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'model', value: String(i) });
+  // while busy, a change is undone instead of disabling the radios
+  input.onchange = () => (busy ? renderModels() : selectModel(i));
+  const size = Object.assign(document.createElement('span'), { className: 'size' });
+  label.append(input, Object.assign(document.createElement('span'), { className: 'name', textContent: m.name }), size);
+  modelsEl.append(label);
+  return { input, size };
+});
+
+// arrow keys would move focus to a radio whose change is then undone
+modelsEl.addEventListener('keydown', (ev) => {
+  if (busy && ev.key.startsWith('Arrow')) ev.preventDefault();
+});
+
 function renderModels() {
-  modelsEl.replaceChildren(
-    ...SIMPLE_MODELS.map((m, i) => {
-      const label = document.createElement('label');
-      label.title = `${m.repo}, ${m.file}`;
-      const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'model', value: String(i), checked: i === modelIdx, disabled: busy });
-      input.onchange = () => selectModel(i);
-      const size = cached.has(m.url) ? 'downloaded' : fmtBytes(m.size);
-      label.append(input, Object.assign(document.createElement('span'), { className: 'name', textContent: m.name }), Object.assign(document.createElement('span'), { className: 'size', textContent: size }));
-      return label;
-    })
-  );
+  modelsEl.setAttribute('aria-busy', String(busy));
+  modelInputs.forEach(({ input, size }, i) => {
+    input.checked = i === modelIdx;
+    size.textContent = cached.has(SIMPLE_MODELS[i].url) ? 'downloaded' : fmtBytes(SIMPLE_MODELS[i].size);
+  });
 }
 
 function syncStatus() {
@@ -154,14 +166,22 @@ function setBusy(b: boolean) {
   syncStatus();
 }
 
-/** prompt and model in the page URL, so the address bar is always a shareable link; the advanced view gets the same */
-function updateUrl() {
+/** prompt and model for links */
+function linkQuery() {
   const q = new URLSearchParams();
   // the loaded model, which the lens on screen comes from; the choice only once nothing is loaded
   q.set('model', SIMPLE_MODELS[loadedIdx >= 0 ? loadedIdx : modelIdx].url);
   if (promptEl.value) q.set('prompt', promptEl.value);
-  history.replaceState(null, '', `${location.pathname}?${q}`);
-  advancedLink.href = `advanced.html?${q}`;
+  return q;
+}
+
+/** the advanced view gets the same prompt and model; cheap, so it follows every keystroke */
+const syncAdvancedLink = () => (advancedLink.href = `advanced.html?${linkQuery()}`);
+
+/** prompt and model in the page URL, so the address bar is a shareable link; not per keystroke, browsers rate-limit replaceState */
+function updateUrl() {
+  history.replaceState(null, '', `${location.pathname}?${linkQuery()}`);
+  syncAdvancedLink();
 }
 
 async function run() {
@@ -622,8 +642,10 @@ examplesEl.replaceChildren(
 );
 promptEl.addEventListener('input', () => {
   examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(promptEl.value === x.title)));
-  updateUrl();
+  syncAdvancedLink();
 });
+// once editing ends (blur or Enter); a run writes it too
+promptEl.addEventListener('change', updateUrl);
 
 showPreviewBadge($('preview-badge'));
 

@@ -82,7 +82,7 @@ let hideTimer = 0;
 
 export function initGlossary() {
   const pop = document.getElementById('gloss')!;
-  // markers written in index.html get the same attributes as info()
+  // markers written in advanced.html get the same attributes as info()
   document.querySelectorAll<HTMLButtonElement>('button.info[data-term]').forEach((b) => {
     const t = TERMS[b.dataset.term!];
     // an unknown term must not break the page
