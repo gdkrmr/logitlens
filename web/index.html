@@ -29,9 +29,10 @@
       </header>
 
       <section class="sv-controls" aria-label="Model and prompt">
-        <div class="sv-row">
+        <div id="model-row" class="sv-row">
           <span class="label" id="model-h">Model</span>
           <div id="models" class="sv-models" role="radiogroup" aria-labelledby="model-h"></div>
+          <button id="btn-models" type="button" class="link-btn sv-change" hidden>Change</button>
           <p id="model-status" class="sv-status" role="status"></p>
         </div>
         <form id="prompt-form" class="sv-prompt">

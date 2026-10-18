@@ -43,6 +43,8 @@ const progressDetail = $<HTMLParagraphElement>('progress-detail');
 const btnCancel = $<HTMLButtonElement>('btn-cancel');
 const caption = $<HTMLParagraphElement>('caption');
 const btnPlay = $<HTMLButtonElement>('btn-play');
+const modelRow = $<HTMLDivElement>('model-row');
+const btnModels = $<HTMLButtonElement>('btn-models');
 const runStatus = $<HTMLParagraphElement>('run-status');
 const scrub = $<HTMLInputElement>('scrub');
 
@@ -351,7 +353,7 @@ interface Scene {
   klValue: SVGTextElement | null;
   yh: (l: number) => number;
   sx: number;
-  row: { x: number; labelW: number; barX: number; barW: number; y0: number; h: number; fs: number };
+  row: { x: number; labelW: number; barX: number; barW: number; y0: number; h: number; fs: number; narrow: boolean };
   kx: (l: number) => number;
   ky: (v: number) => number;
 }
@@ -391,16 +393,18 @@ function build() {
   const blocks: SVGRectElement[] = [];
   const nodeR = clamp(s * 0.3, 2.5, 8);
   const blockR = SX - 18;
+  // layer numbers in an axis column left of the blocks, not inside them
+  const lfs = clamp(s * 0.85, 10, 12);
+  const axisW = Math.ceil(lfs * 0.62 * 2) + 6;
+  const blockL = 2 + axisW;
   const bh = Math.min(s * 0.72, 26);
   for (let l = 1; l < L.nL; l++) {
     const mid = (yh(l) + yh(l - 1)) / 2;
     el('path', { d: `M${SX} ${yh(l - 1) - nodeR} L${blockR} ${mid}`, fill: 'none' }, svg, undefined, { stroke: 'var(--ink-3)', strokeWidth: '1.2', opacity: '0.6' });
     el('path', { d: `M${blockR} ${mid} L${SX - nodeR} ${yh(l)}`, fill: 'none' }, svg, undefined, { stroke: 'var(--ink-3)', strokeWidth: '1.5' });
-    blocks.push(el('rect', { x: 2, y: mid - bh / 2, width: blockR - 2, height: bh, rx: Math.min(5, bh / 3) }, svg, undefined, { fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: '1.2' }));
-    // every layer named where there is room, else every fifth
-    const label = s >= 22 ? `layer ${l}` : s >= 16 || l % 5 === 0 || l === L.nL - 1 ? String(l) : '';
-    const lfs = clamp(bh * 0.8, 10, 12);
-    if (label) el('text', { x: (blockR + 2) / 2, y: mid + lfs * 0.36, 'text-anchor': 'middle', class: 'sv-svg-mono' }, svg, label, { fontSize: `${lfs}px`, fill: 'var(--ink-2)' });
+    blocks.push(el('rect', { x: blockL, y: mid - bh / 2, width: blockR - blockL, height: bh, rx: Math.min(5, bh / 3) }, svg, undefined, { fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: '1.2' }));
+    // every layer where the rows have room, else every fifth and the last
+    if (s >= 14 || l % 5 === 0 || l === L.nL - 1) el('text', { x: axisW, y: mid + lfs * 0.36, 'text-anchor': 'end', class: 'sv-svg-mono' }, svg, String(l), { fontSize: `${lfs}px`, fill: 'var(--ink-3)' });
     el('circle', { cx: SX, cy: yh(l), r: nodeR }, svg, undefined, { fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: '1.2' });
   }
 
@@ -436,7 +440,7 @@ function build() {
   const kx = (l: number) => RX + (l / (L.nL - 1)) * Math.max(40, RW - 90);
   const ky = (v: number) => H - 8 - (v / kmax) * (KH - 40);
   if (KH) {
-    el('text', { x: RX, y: H - KH + 14, class: 'sv-svg-text' }, svg, 'Distance from the final answer (KL divergence)', { fontSize: `${fs}px`, fill: 'var(--ink-2)' });
+    el('text', { x: RX, y: H - KH + 14, class: 'sv-svg-text' }, svg, narrow ? 'Distance from the final answer (KL)' : 'Distance from the final answer (KL divergence)', { fontSize: `${fs}px`, fill: 'var(--ink-2)' });
     el('line', { x1: kx(0), y1: H - 8, x2: kx(L.nL - 1), y2: H - 8 }, svg, undefined, { stroke: 'var(--rule)', strokeWidth: '1.5' });
     klPath = el('path', { fill: 'none' }, svg, undefined, { stroke: 'var(--data)', strokeWidth: '2.5', strokeLinejoin: 'round' });
     klDot = el('circle', { r: 5 }, svg, undefined, { fill: 'var(--trace)' });
@@ -445,15 +449,17 @@ function build() {
   svg.append(lensG);
   builtW = W;
   builtH = H;
-  scene = { blocks, active, lens: lensG, lensLabel, outBox, outText, title, bars: new Map(), barLayer, other, klPath, klDot, klValue, yh, sx: SX, row: { x: RX, labelW, barX, barW, y0, h, fs }, kx, ky };
+  scene = { blocks, active, lens: lensG, lensLabel, outBox, outText, title, bars: new Map(), barLayer, other, klPath, klDot, klValue, yh, sx: SX, row: { x: RX, labelW, barX, barW, y0, h, fs, narrow }, kx, ky };
 }
 
 function makeBar(sc: Scene, id: number, y: number): Bar {
   const { labelW, barX, barW, h } = sc.row;
   const g = el('g', {}, sc.barLayer);
-  const fs = clamp(h * 0.42, 11, 16);
+  // smaller on phones, where the label column is narrow
+  const fs = clamp(h * 0.42, 11, sc.row.narrow ? 13 : 16);
   const bh = h * 0.66;
-  const chars = Math.max(3, Math.floor(labelW / (fs * 0.62)));
+  // condensed mono: about 0.56 em per character
+  const chars = Math.max(3, Math.floor(labelW / (fs * 0.56)));
   // quoted, so a leading space shows: " cold" and "cold" are different tokens
   const text = quoted(id);
   const label = el('text', { x: barX - 8, y: bh / 2 + fs * 0.36, 'text-anchor': 'end', class: 'sv-svg-mono' }, g, text.length > chars ? `${text.slice(0, chars - 1)}…` : text, { fontSize: `${fs}px`, fill: 'var(--ink)' });
@@ -613,7 +619,18 @@ function klAt(L: Lens, l: number): number {
   return L.kl[i] + (L.kl[j] - L.kl[i]) * (l - i);
 }
 
+/** after a run only the chosen model shows, with a button to pick another */
+function collapseModels(collapse: boolean) {
+  modelRow.classList.toggle('collapsed', collapse);
+  btnModels.hidden = !collapse;
+}
+btnModels.onclick = () => {
+  collapseModels(false);
+  modelInputs[modelIdx].input.focus();
+};
+
 function show(r: LogitLensResult) {
+  collapseModels(true);
   res = r;
   resIdx = loadedIdx;
   lens = makeLens(r);

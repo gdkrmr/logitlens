@@ -94,6 +94,21 @@
   cursor: default;
   opacity: 0.6;
 }
+/* collapsed after a run: the chosen model only; the status line stays a live region but is not shown */
+.sv-row.collapsed .sv-models label:not(:has(input:checked)),
+.sv-row.collapsed .sv-models .size {
+  display: none;
+}
+.sv-row.collapsed .sv-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.sv-change {
+  font-size: 13px;
+}
 .sv-status {
   margin: 0;
   font-size: 13px;
