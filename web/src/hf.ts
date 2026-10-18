@@ -123,3 +123,10 @@ export function quantLabel(path: string): string {
   const m = /(?:^|[-_.])((?:UD-)?(?:I?Q\d(?:_[A-Z0-9]+)*|BF16|F16|F32|MXFP4|NVFP4))$/i.exec(name);
   return m ? m[1].toUpperCase() : name;
 }
+
+// the two models of the simple view; Q8_0 keeps the early layers clean on small models
+const smolQ8 = PRESET_FILES[DEFAULT_REPO].find((f) => f.path === 'SmolLM2-135M-Instruct-Q8_0.gguf')!;
+export const SIMPLE_MODELS = [
+  { name: 'SmolLM2 135M', repo: DEFAULT_REPO, file: smolQ8.path, size: smolQ8.size, note: 'Small, quick to download' },
+  { name: 'Qwen3.5 0.8B', repo: 'unsloth/Qwen3.5-0.8B-GGUF', file: 'Qwen3.5-0.8B-Q8_0.gguf', size: 811843840, note: 'Larger, clearer middle layers' },
+].map((m) => ({ ...m, url: fileUrl(m.repo, m.file) }));
