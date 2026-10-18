@@ -506,6 +506,11 @@ function play() {
 
 function pause() {
   playing = false;
+  // at rest the lens sits on a whole layer, so the bars, the title and the caption all read the same row
+  if (lens && lc !== Math.round(lc)) {
+    lc = Math.round(lc);
+    kick();
+  }
   btnPlay.textContent = lens && lc >= lens.nL - 1 - 1e-3 ? 'Replay' : 'Play';
 }
 
@@ -590,8 +595,7 @@ function draw(dt: number): boolean {
     const pinned = id === L.final && w.y >= y0 + SHOWN * h - 0.5;
     // short form where the bar is narrow
     const noteX = Math.max(8, sc.row.barW * w.p + 6);
-    // the row the bars interpolate from, so note and bar agree mid-move
-    const rank = L.finalRank[Math.floor(lc)] + 1;
+    const rank = L.finalRank[li] + 1;
     b.note.textContent = !pinned ? '' : sc.row.barW - noteX > 130 ? `final answer, rank ${rank}` : `rank ${rank}`;
     b.note.setAttribute('x', String(sc.row.barX + noteX));
   }
