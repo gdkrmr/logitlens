@@ -1,7 +1,7 @@
 // simple view: one model out of two, one prompt, and the guess for the next token animated through the layers
 // loaded by simple-entry.ts, which also loads the styles and sends links for the advanced view there
 import type { LogitLensResult } from '@wllama/wllama';
-import { showPiece } from './heatmap';
+import { showPiece, layerLabel } from './heatmap';
 import { webGpuProblem } from './gpu';
 import { SIMPLE_MODELS, fmtBytes } from './hf';
 import { newWllama, unloaded, recovered, cachedModels, esc, pct, setBar, showPreviewBadge } from './common';
@@ -287,7 +287,8 @@ const piece = (id: number) => showPiece(res?.pieces.get(id));
 const word = (id: number) => `“<span class="tok">${esc(piece(id).replace(/^␣(?=.)/, '').trim() || piece(id))}</span>”`;
 /** a token for SVG text: quoted, so leading spaces stay visible */
 const quoted = (id: number) => `\u201c${piece(id)}\u201d`;
-const rowName = (l: number) => (l === 0 ? 'the embedding' : `layer ${l}`);
+// row l > 0 is the output of block l - 1: layers count from 0, as in the advanced view (layerLabel)
+const rowName = (l: number) => (l === 0 ? 'the embedding' : `layer ${layerLabel(l)}`);
 
 /** probability of a token at a fractional row; 0 where it is outside the top K */
 function probAt(L: Lens, id: number, lc: number): number {
@@ -307,11 +308,11 @@ function captionFor(L: Lens, lc: number): string {
     const echo = L.top[0] === L.input ? `mostly points back at the input token ${word(L.input)} itself` : `gives a shallow guess, ${word(L.top[0])}`;
     return `<b>Embedding.</b> No layer has run yet. Read through the lens, the input ${echo}.`;
   }
-  if (l >= L.settle) return `<b>Layer ${l}.</b> ${word(L.final)} has been the top guess since ${rowName(L.settle)}. The remaining layers mostly make the model more sure (${fp} now).`;
-  if (L.top[l] === L.final) return `<b>Layer ${l}.</b> ${word(L.final)} is on top here, but later layers still waver.`;
+  if (l >= L.settle) return `<b>Layer ${layerLabel(l)}.</b> ${word(L.final)} has been the top guess since ${rowName(L.settle)}. The remaining layers mostly make the model more sure (${fp} now).`;
+  if (L.top[l] === L.final) return `<b>Layer ${layerLabel(l)}.</b> ${word(L.final)} is on top here, but later layers still waver.`;
   const rank = L.finalRank[l] + 1;
   const where = rank <= 1000 ? `at rank ${rank}` : 'far down the list';
-  return `<b>Layer ${l}.</b> The top guess is ${word(L.top[l])}. The final answer ${word(L.final)} is still ${where} (${pct(L.finalP[l])}).`;
+  return `<b>Layer ${layerLabel(l)}.</b> The top guess is ${word(L.top[l])}. The final answer ${word(L.final)} is still ${where} (${pct(L.finalP[l])}).`;
 }
 
 /////////////////////////////////////////////
@@ -404,7 +405,7 @@ function build() {
     el('path', { d: `M${blockR} ${mid} L${SX - nodeR} ${yh(l)}`, fill: 'none' }, svg, undefined, { stroke: 'var(--ink-3)', strokeWidth: '1.5' });
     blocks.push(el('rect', { x: blockL, y: mid - bh / 2, width: blockR - blockL, height: bh, rx: Math.min(5, bh / 3) }, svg, undefined, { fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: '1.2' }));
     // every layer where the rows have room, else every fifth and the last
-    if (s >= 14 || l % 5 === 0 || l === L.nL - 1) el('text', { x: axisW, y: mid + lfs * 0.36, 'text-anchor': 'end', class: 'sv-svg-mono' }, svg, String(l), { fontSize: `${lfs}px`, fill: 'var(--ink-3)' });
+    if (s >= 14 || (l - 1) % 5 === 0 || l === L.nL - 1) el('text', { x: axisW, y: mid + lfs * 0.36, 'text-anchor': 'end', class: 'sv-svg-mono' }, svg, layerLabel(l), { fontSize: `${lfs}px`, fill: 'var(--ink-3)' });
     el('circle', { cx: SX, cy: yh(l), r: nodeR }, svg, undefined, { fill: 'var(--panel)', stroke: 'var(--ink-3)', strokeWidth: '1.2' });
   }
 
@@ -547,7 +548,7 @@ function draw(dt: number): boolean {
   const y = sc.yh(lc);
   sc.active.setAttribute('y2', String(y));
   sc.lens.setAttribute('transform', `translate(0 ${y})`);
-  sc.lensLabel.textContent = li === 0 ? 'embedding' : `layer ${li}`;
+  sc.lensLabel.textContent = li === 0 ? 'embedding' : `layer ${layerLabel(li)}`;
   // below the line near the top, where the output box would cover it
   sc.lensLabel.setAttribute('y', y - sc.yh(L.nL - 1) < 20 ? '17' : '-7');
   sc.outBox.style.stroke = atEnd ? 'var(--trace)' : 'var(--rule)';
@@ -556,7 +557,7 @@ function draw(dt: number): boolean {
     sc.outText.textContent = 'output';
     if (atEnd) el('tspan', {}, sc.outText, ` → ${piece(L.final)}`, { fill: 'var(--trace)', fontWeight: '700' });
   }
-  sc.title.textContent = li === 0 ? 'Lens at the embedding' : `Lens at layer ${li} of ${last}`;
+  sc.title.textContent = li === 0 ? 'Lens at the embedding' : `Lens at layer ${layerLabel(li)} (of 0\u2013${layerLabel(last)})`;
 
   // top 5 at this row, the final answer pinned below them if it is not among them
   const ids = new Set<number>([...L.probs[Math.floor(lc)].keys(), ...L.probs[Math.min(last, Math.floor(lc) + 1)].keys(), L.final]);
