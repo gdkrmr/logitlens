@@ -60,6 +60,7 @@
   flex-wrap: wrap;
 }
 .sv-models label {
+  position: relative;
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
@@ -131,7 +132,8 @@
 .sv-examples .examples-list button {
   white-space: nowrap;
 }
-.sv-examples .examples-list button:disabled {
+.sv-examples .examples-list[aria-busy='true'] button,
+.sv-prompt .btn[aria-disabled='true'] {
   opacity: 0.6;
   cursor: default;
 }

@@ -7,7 +7,7 @@ import { drawTrace, type TracePoint } from './trace';
 import { ChatFormat } from './chat';
 import { webGpuProblem } from './gpu';
 import { newWllama, unloaded, recovered, cachedModels, esc, pct, setBar as setBarOf, showPreviewBadge } from './common';
-import { modelParam, type AdvancedParam } from './views';
+import { modelParam, advancedOnly, type AdvancedParam } from './views';
 import { info, initGlossary } from './glossary';
 import { SUPPORTED_ARCHS, MAX_FILE_BYTES, tooLargeForBrowser, onlySmallFilesFit, searchRepos, getRepo, listGgufFiles, isSupported, pickDefaultFile, quantLabel, fmtBytes, fmtParams, fmtCount, DEFAULT_REPO, PRESET_FILES, SIMPLE_MODELS, type RepoInfo } from './hf';
 
@@ -530,6 +530,8 @@ function syncSimpleLink() {
   // not simple.size: older Safari and Firefox lack it
   const qs = simple.toString();
   simpleLink.href = `./${qs ? `?${qs}` : ''}`;
+  // a prompt the simple view cannot hold would bounce straight back here, without this page's settings
+  simpleLink.parentElement!.hidden = advancedOnly(simple);
 }
 
 /** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */

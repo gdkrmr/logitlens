@@ -43,6 +43,7 @@ const progressDetail = $<HTMLParagraphElement>('progress-detail');
 const btnCancel = $<HTMLButtonElement>('btn-cancel');
 const caption = $<HTMLParagraphElement>('caption');
 const btnPlay = $<HTMLButtonElement>('btn-play');
+const runStatus = $<HTMLParagraphElement>('run-status');
 const scrub = $<HTMLInputElement>('scrub');
 
 let wllama = newWllama();
@@ -114,11 +115,8 @@ async function load(i: number) {
   const fromCache = cached.has(m.url);
   const ctl = (loadCtl = new AbortController());
   const setup = `Setting up the model${gpuProblem ? '' : ' and the graphics card'}; this takes a few seconds.`;
-  // the progress panel replaces the previous model's scene while it loads
   progress.hidden = false;
   intro.hidden = true;
-  svg.style.visibility = 'hidden';
-  caption.textContent = lastCaption = '';
   btnCancel.hidden = fromCache;
   progressPhase.textContent = fromCache ? `Loading ${m.name} from your browser` : `Downloading ${m.name}`;
   progressDetail.textContent = fromCache ? setup : 'Starting...';
@@ -153,15 +151,15 @@ async function load(i: number) {
   } finally {
     loadCtl = null;
     progress.hidden = true;
-    svg.style.visibility = '';
     await refreshCache();
   }
 }
 
+// not disabled while busy (that drops keyboard focus): marked busy, and clicks are ignored
 function setBusy(b: boolean) {
   busy = b;
-  btnRun.disabled = b;
-  examplesEl.querySelectorAll('button').forEach((x) => (x.disabled = b));
+  btnRun.setAttribute('aria-disabled', String(b));
+  examplesEl.setAttribute('aria-busy', String(b));
   renderModels();
   syncStatus();
 }
@@ -184,16 +182,37 @@ function updateUrl() {
   syncAdvancedLink();
 }
 
+/** the caption changes every layer, so it is not a live region; errors also go to one that is */
+function announce(msg: string) {
+  caption.textContent = lastCaption = runStatus.textContent = msg;
+}
+
+/** another model's scene stays hidden, and cannot be played, until the new one is shown or cleared */
+function hideScene(hide: boolean) {
+  svg.style.visibility = hide ? 'hidden' : '';
+  scrub.disabled = btnPlay.disabled = hide || !lens;
+  // bars still easing would keep redrawing the old caption
+  if (hide && frameId) {
+    cancelAnimationFrame(frameId);
+    frameId = 0;
+  }
+}
+
 async function run() {
   if (busy) return;
   if (!promptEl.value.trim()) {
-    caption.textContent = 'Type a prompt first, or pick one of the examples.';
+    announce('Type a prompt first, or pick one of the examples.');
     return promptEl.focus();
   }
   setBusy(true);
   pause();
+  runStatus.textContent = '';
   try {
-    if (loadedIdx !== modelIdx) await load(modelIdx);
+    if (loadedIdx !== modelIdx) {
+      hideScene(true);
+      caption.textContent = lastCaption = '';
+      await load(modelIdx);
+    }
     caption.textContent = 'Running the model...';
     const r = await wllama.logitLens({ prompt: promptEl.value, k: K, mtp: false, mtpDraft: 0 });
     show(r);
@@ -202,8 +221,9 @@ async function run() {
     // a cancelled download keeps the previous model: go back to it; the scene stays only if it is that model's
     if (loadedIdx >= 0) modelIdx = loadedIdx;
     if (loadedIdx < 0 || resIdx !== loadedIdx) clearScene();
-    caption.textContent = lastCaption = `Something went wrong: ${(e as Error).message}`;
+    announce(`Something went wrong: ${(e as Error).message}`);
   } finally {
+    hideScene(false);
     setBusy(false);
   }
 }
@@ -226,6 +246,7 @@ interface Lens {
   kl: Float32Array; // KL(final || row), nats
   top: number[]; // top-1 per row
   settle: number; // first row from which every row's top-1 is the final prediction
+  finalEog: boolean; // asked of the model the lens came from, not whichever is loaded later
   input: number; // the last prompt token
 }
 
@@ -256,7 +277,7 @@ function makeLens(r: LogitLensResult): Lens {
   const final = top[nL - 1];
   let settle = nL - 1;
   while (settle > 0 && top[settle - 1] === final) settle--;
-  return { r, nL, probs, final, finalP, finalRank, kl, top, settle, input: r.tokens[t] };
+  return { r, nL, probs, final, finalP, finalRank, kl, top, settle, finalEog: wllama.isTokenEOG(final), input: r.tokens[t] };
 }
 
 const piece = (id: number) => showPiece(res?.pieces.get(id));
@@ -278,7 +299,7 @@ function captionFor(L: Lens, lc: number): string {
   const l = Math.round(lc);
   const last = L.nL - 1;
   const fp = pct(L.finalP[l]);
-  if (wllama.isTokenEOG(L.final) && l === last) return `<b>Last layer.</b> The model predicts the end of the text here.`;
+  if (L.finalEog && l === last) return `<b>Last layer.</b> The model predicts the end of the text here.`;
   if (l === last) return `<b>Last layer.</b> Here the lens is exact: this is the model's own prediction, ${word(L.final)} at ${fp}.`;
   if (l === 0) {
     const echo = L.top[0] === L.input ? `mostly points back at the input token ${word(L.input)} itself` : `gives a shallow guess, ${word(L.top[0])}`;
@@ -562,7 +583,8 @@ function draw(dt: number): boolean {
     const pinned = id === L.final && w.y >= y0 + SHOWN * h - 0.5;
     // short form where the bar is narrow
     const noteX = Math.max(8, sc.row.barW * w.p + 6);
-    const rank = L.finalRank[li] + 1;
+    // the row the bars interpolate from, so note and bar agree mid-move
+    const rank = L.finalRank[Math.floor(lc)] + 1;
     b.note.textContent = !pinned ? '' : sc.row.barW - noteX > 130 ? `final answer, rank ${rank}` : `rank ${rank}`;
     b.note.setAttribute('x', String(sc.row.barX + noteX));
   }
@@ -646,8 +668,11 @@ examplesEl.replaceChildren(
     b.title = ex.prompt;
     b.setAttribute('aria-pressed', String(promptEl.value === ex.prompt));
     b.onclick = () => {
+      if (busy) return;
       promptEl.value = ex.prompt;
-      examplesEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      // keeps the pressed state, the advanced link and the URL in step even if the run fails or is cancelled
+      promptEl.dispatchEvent(new Event('input'));
+      updateUrl();
       run();
     };
     return b;
