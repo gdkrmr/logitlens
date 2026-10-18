@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- adds the cross-origin isolation headers on hosts that cannot send them (GitHub Pages); no-op otherwise -->
     <script src="coi-serviceworker.min.js"></script>
     <title>Logit Lens</title>
@@ -10,7 +10,7 @@
     <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="icon" href="favicon-16.png" sizes="16x16" type="image/png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-    <meta name="description" content="See what each layer of a GGUF language model would predict. Runs in the browser with WebGPU." />
+    <meta name="description" content="Watch a language model's guess for the next word form, layer by layer. Runs in the browser with WebGPU." />
     <script>
       // apply the saved theme before first paint
       try {
@@ -18,181 +18,64 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
     </script>
-    <script type="module" crossorigin src="./assets/main-DzlfE9hA.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/style-BvmFh2dO.js">
-    <link rel="stylesheet" crossorigin href="./assets/style-Twkh1Rcy.css">
+    <script type="module" crossorigin src="./assets/main-B91HN0Tn.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/style-CtRWZltT.js">
+    <link rel="modulepreload" crossorigin href="./assets/views-Bn9otGB2.js">
+    <link rel="stylesheet" crossorigin href="./assets/style-C2CKfw9G.css">
+    <link rel="stylesheet" crossorigin href="./assets/main-DytQtSEz.css">
   </head>
   <body>
-    <div class="app">
-      <aside class="rail" aria-labelledby="model-h">
-        <header class="brand">
-          <p class="wordmark">logit lens</p>
-          <p id="preview-badge" class="preview-badge" hidden></p>
-          <p class="tagline">Look inside a language model: see which word each of its layers would predict next, and watch the final answer form.</p>
-        </header>
+    <div class="sv">
+      <header class="sv-head">
+        <p class="wordmark">logit lens</p>
+        <p class="sv-tag">Watch a language model's guess for the next word form, layer by layer.</p>
+        <p id="preview-badge" class="preview-badge" hidden></p>
+        <a id="advanced-link" class="sv-adv" href="advanced.html">Advanced view &rarr;</a>
+      </header>
 
-        <section class="block">
-          <h2 id="model-h" class="label">Model</h2>
-          <p id="model-current" class="model-current"></p>
-          <div id="rail-load" class="rail-load">
-            <div class="load-row">
-              <button id="btn-load" type="button" class="btn" disabled>Load model</button>
-            </div>
-            <p class="hint download-note" data-download-note></p>
-          </div>
-          <p id="model-status" class="status" role="status">No model loaded yet.</p>
+      <section class="sv-controls" aria-label="Model and prompt">
+        <div id="model-row" class="sv-row">
+          <span class="label" id="model-h">Model</span>
+          <div id="models" class="sv-models" role="radiogroup" aria-labelledby="model-h"></div>
+          <button id="btn-models" type="button" class="link-btn sv-change" hidden>Change</button>
+          <p id="model-status" class="sv-status" role="status"></p>
+        </div>
+        <form id="prompt-form" class="sv-prompt">
+          <label class="sr-only" for="prompt">Prompt</label>
+          <input id="prompt" type="text" autocomplete="off" spellcheck="false" value="The Eiffel Tower is located in the city of" />
+          <button id="btn-run" class="btn" type="submit">Run</button>
+        </form>
+        <div class="sv-row sv-examples">
+          <span class="label" id="examples-h">Try</span>
+          <div id="examples" class="examples-list" role="group" aria-labelledby="examples-h"></div>
+        </div>
+      </section>
 
-          <details id="model-options" class="options">
-            <summary>Model and settings</summary>
-            <div class="options-body">
-              <label class="sr-only" for="model-search">Search Hugging Face GGUF models</label>
-              <input id="model-search" type="search" placeholder="Search models, or owner/repo" autocomplete="off" spellcheck="false" />
-              <p id="repo-meta" class="hint" role="status"></p>
-              <div id="repo-list" class="repo-list" aria-label="Models"></div>
-
-              <div id="quant-block" class="quant-block" hidden>
-                <h3 class="label"><span id="quant-h">Quantization</span> <button class="info" data-term="quantization"></button> <span id="quant-repo" class="label-note"></span></h3>
-                <p id="quant-note" class="hint" hidden></p>
-                <div id="quant-list" class="quant-list" role="radiogroup" aria-labelledby="quant-h"></div>
-                <p class="hint">Higher precision (Q8_0, F16) keeps early-layer readouts cleaner on small models.</p>
-              </div>
-
-              <label class="btn btn-quiet file-btn">
-                <input id="file-input" type="file" accept=".gguf" multiple />
-                <span>Open .gguf file</span>
-              </label>
-              <div class="check-row"><label class="check"><input id="use-gpu" type="checkbox" checked /> Use WebGPU (graphics card)</label><button class="info" data-term="webgpu"></button></div>
-              <div id="mtp-settings" class="mtp-settings" hidden>
-                <div class="check-row"><label class="check"><input id="use-mtp" type="checkbox" checked /> MTP rows and draft</label><button class="info" data-term="mtp"></button></div>
-                <div class="check-row"><label class="num" for="mtp-draft">Draft tokens</label><input id="mtp-draft" type="number" min="0" max="8" step="1" value="3" inputmode="numeric" /><button class="info" data-term="draft"></button></div>
-                <p class="hint">This model has an MTP block. Off: no MTP rows, no draft, and a faster run. 0 draft tokens keeps only the MTP rows.</p>
-              </div>
-              <div id="cache-row" class="cache-row" hidden>
-                <span id="cache-info"></span>
-                <button id="btn-clear-cache" type="button" class="link-btn">Delete cached models</button>
-              </div>
-            </div>
-          </details>
-        </section>
-
-        <footer class="rail-foot">
-          <span class="label" id="theme-h">Theme</span>
-          <div class="seg" role="radiogroup" aria-labelledby="theme-h">
-            <label><input type="radio" name="theme" value="auto" checked /> Auto</label>
-            <label><input type="radio" name="theme" value="light" /> Light</label>
-            <label><input type="radio" name="theme" value="dark" /> Dark</label>
-          </div>
-          <p class="legal">&copy; 2026 Guido Kraemer &middot; <a href="LICENSE.txt">MIT License</a> &middot; <a href="https://github.com/gdkrmr/logitlens">Source on GitHub</a> &middot; <a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a> &middot; <a href="impressum.html" lang="de">Impressum &amp; Datenschutz</a></p>
-        </footer>
-      </aside>
-
-      <main class="stage">
-        <section class="block prompt-block" aria-labelledby="prompt-h">
-          <h2 id="prompt-h" class="label">Prompt</h2>
-          <p id="model-indicator" class="model-indicator" hidden><a href="#model-h"></a></p>
-          <div class="prompt-row">
-            <textarea id="prompt" rows="2" spellcheck="false">The Eiffel Tower is located in the city of</textarea>
-            <div class="prompt-actions">
-              <button id="btn-run" type="button" class="btn">Run lens</button>
-              <div class="continue" role="group" aria-label="Append the predicted token and run again">
-                <button id="btn-continue" type="button" class="btn btn-quiet" disabled title="Append the final prediction to the prompt and run again">Continue +1</button>
-                <button id="btn-continue5" type="button" class="btn btn-quiet" disabled title="Append five predictions, one at a time">+5</button>
-              </div>
-            </div>
-          </div>
-          <div class="chat-row">
-            <label class="check" id="chat-label" title="Load a model first"><input id="use-chat" type="checkbox" disabled /> Chat format</label><button class="info" data-term="chat"></button>
-            <span id="chat-note" class="chat-note"></span>
-          </div>
-          <div class="examples" role="group" aria-labelledby="examples-label">
-            <span id="examples-label" class="examples-label">Try</span>
-            <div id="examples" class="examples-list"></div>
-          </div>
-          <p id="example-note" class="hint example-note"></p>
-          <p id="run-status" class="hint run-status" role="status"></p>
-          <details id="timings-box" class="timings-box" hidden>
-            <summary id="timings-summary"></summary>
-            <dl id="timings" class="timings"></dl>
-          </details>
-        </section>
-
-        <section id="load-panel" class="load-panel" hidden aria-labelledby="load-phase">
-          <div class="load-head">
-            <p id="load-phase" class="load-phase"></p>
-            <button id="btn-cancel" type="button" class="btn btn-quiet">Cancel download</button>
-          </div>
-          <div id="load-bar" class="bar" role="progressbar" aria-labelledby="load-phase" aria-valuemin="0" aria-valuemax="100"><div class="bar-fill"></div></div>
-          <p id="load-detail" class="load-detail"></p>
-        </section>
-
-        <section id="empty" class="empty">
-          <p class="empty-title" id="empty-title">Load a model to start.</p>
-          <p class="empty-note">SmolLM2 135M is preselected because it is a small download. Larger models (0.5 to 1 billion parameters <button class="info" data-term="parameters"></button>) give clearer results in the middle layers.</p>
-          <p class="empty-action"><button id="btn-load-empty" type="button" class="btn" hidden></button></p>
-          <p class="hint download-note empty-download-note" data-download-note></p>
-          <p>Each column is one piece of your prompt, called a token <button class="info" data-term="token"></button>. Each row is one processing step of the model, called a layer <button class="info" data-term="layer"></button>: the input at the bottom (the embedding <button class="info" data-term="embedding"></button>), the final answer at the top. Each cell shows the word that step would predict next, in a stronger color when the model is more confident.</p>
-        </section>
-
-        <section id="result" class="block readout" hidden aria-labelledby="result-h">
-          <div class="readout-head">
-            <div class="head-term"><h2 id="result-h" class="label">What each layer predicts</h2><button class="info" data-term="layer"></button></div>
-            <div class="controls">
-              <div class="seg" role="radiogroup" aria-label="Shade cells by">
-                <label title="How sure each layer is of its top word"><input type="radio" name="color" value="prob" checked /> Probability</label>
-                <label title="How spread out each layer's guesses are"><input type="radio" name="color" value="entropy" /> Entropy</label>
-                <label title="How far this layer's guesses are from the final layer's (KL divergence)"><input type="radio" name="color" value="kl" /> KL</label>
-                <label title="Pick a word in the trace below first"><input type="radio" name="color" value="word" disabled /> Word</label>
-                <label title="Pick two words in the trace below first"><input type="radio" name="color" value="contrast" disabled /> Contrast</label>
-              </div>
-              <div class="seg" role="radiogroup" aria-label="View">
-                <label><input type="radio" name="view" value="heatmap" checked /> Heatmap</label>
-                <label><input type="radio" name="view" value="table" /> Table</label>
-              </div>
-              <div class="share" role="group" aria-label="Share and export">
-                <button id="btn-copy-link" type="button" class="btn btn-quiet">Copy link</button>
-                <button id="btn-export-json" type="button" class="btn btn-quiet">Export JSON</button>
-                <button id="btn-export-png" type="button" class="btn btn-quiet">Export PNG</button>
-              </div>
-            </div>
-          </div>
-          <p id="summary" class="summary"></p>
-          <details class="howto">
-            <summary>How to read this</summary>
-            <ul>
-              <li>Each <strong>column</strong> is one piece of your prompt. The model reads text in pieces called tokens, so long words are split, for example "Eiffel" into "Eiff" and "el".</li>
-              <li>Each <strong>row</strong> is one processing step (layer) of the model. The bottom row is the input, the top row is the model's final answer.</li>
-              <li>A <strong>cell</strong> shows the word that this layer would predict next if the model stopped there. A stronger blue means more confident.</li>
-              <li>The <strong>amber line</strong> marks where the model settles: from there up, every layer agrees with the final answer.</li>
-              <li id="howto-mtp" hidden>Some models have an extra <strong>MTP</strong> block <button class="info" data-term="mtp"></button>, shown as the rows above the final layer. It guesses two tokens ahead, one position earlier than the layers, but its guess is drawn in the same column as theirs, so every cell in a column guesses the same next token. The first column is empty.</li>
-              <li id="howto-mtp-stages" hidden>The MTP block has three rows <button class="info" data-term="mtpstages"></button>, read from the bottom up like the layers: <strong>proj</strong>, after it mixes the last layer with the next word; <strong>attn</strong>, after it looks back over the text; and <strong>MTP</strong>, its output after a last refining step.</li>
-              <li id="howto-draft" hidden>The dashed <strong>draft</strong> columns go past your prompt. The MTP block guesses on from its own guesses, as in speculative decoding: under each column is the token it reads, and the MTP cells are its guess for the token after. The first one is the model's final prediction, the dashed ones are the drafted tokens. Only the MTP rows have cells there.</li>
-              <li>Shading by <strong>KL</strong> compares the whole list of guesses, not just the top word: a stronger blue means the layer already thinks like the final answer.</li>
-              <li>The small <strong>i</strong> markers explain terms; click or tap them.</li>
-              <li><strong>Hover or tap</strong> a cell for its top 5 guesses. <strong>Clicking or tapping</strong> a cell also follows one word through all layers.</li>
-            </ul>
-          </details>
-          <div id="legend" class="legend"></div>
-          <div id="heatmap-wrap" class="scroll-x">
-            <div class="heatmap-row">
-              <canvas id="heatmap-axis" aria-hidden="true"></canvas>
-              <canvas id="heatmap" tabindex="0" aria-label="Logit lens heatmap. Use arrow keys to move between cells and Enter to trace a position."></canvas>
-            </div>
-          </div>
-          <div id="table-wrap" class="scroll-x" hidden></div>
-          <p class="hint"><span class="on-hover">Hover a cell for its top 5 guesses. Click a cell to trace a word through the layers.</span><span class="on-touch">Tap a cell for its top 5 guesses and to trace a word through the layers.</span></p>
-        </section>
-
-        <section class="block" id="trace" hidden aria-labelledby="trace-h">
-          <h2 id="trace-h" class="label">Follow one word</h2>
-          <p id="trace-desc" class="trace-desc"></p>
-          <div id="trace-chips" class="chips" role="group" aria-label="Token to trace"></div>
-          <div id="trace-actions" class="trace-actions"></div>
-          <div id="trace-plot"></div>
-        </section>
+      <main id="stage" class="sv-stage">
+        <svg id="lens-svg" role="img" aria-label="The model's layers as a stack, with a lens reading the guess for the next token after each layer"></svg>
+        <div id="intro" class="sv-intro">
+          <p class="sv-intro-title">What happens between the prompt and the next word?</p>
+          <p>A language model passes your text through a stack of layers. Only the last one is meant to be read out, but the <strong>logit lens</strong> reads every layer the same way, and shows what the model would guess if it stopped there.</p>
+          <p>Pick a model, type a prompt or pick one, and press <strong>Run</strong>. The model runs in your browser; it is downloaded once and then kept.</p>
+        </div>
+        <div id="progress" class="sv-progress" hidden>
+          <p id="progress-phase" class="sv-progress-phase"></p>
+          <div id="progress-bar" class="bar" role="progressbar" aria-labelledby="progress-phase" aria-valuemin="0" aria-valuemax="100"><div class="bar-fill"></div></div>
+          <p id="progress-detail" class="load-detail"></p>
+          <button id="btn-cancel" type="button" class="btn btn-quiet">Cancel download</button>
+        </div>
       </main>
-    </div>
 
-    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
-    <div id="gloss" class="gloss" role="status"></div>
+      <footer class="sv-foot">
+        <p id="caption" class="sv-caption"></p>
+        <p id="run-status" class="sr-only" role="status"></p>
+        <div class="sv-player">
+          <button id="btn-play" type="button" class="btn btn-quiet" disabled>Play</button>
+          <label class="sr-only" for="scrub">Layer</label>
+          <input id="scrub" type="range" min="0" max="1" step="0.01" value="0" disabled />
+        </div>
+        <p class="legal">&copy; 2026 Guido Kraemer &middot; <a href="LICENSE.txt">MIT License</a> &middot; <a href="https://github.com/gdkrmr/logitlens">Source</a> &middot; <a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a> &middot; <a href="impressum.html" lang="de">Impressum &amp; Datenschutz</a></p>
+      </footer>
+    </div>
   </body>
 </html>
