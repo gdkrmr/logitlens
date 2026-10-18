@@ -527,7 +527,9 @@ function syncSimpleLink() {
   const simple = new URLSearchParams();
   if (model && SIMPLE_MODELS.some((m) => m.url === model)) simple.set('model', model);
   if (promptEl.value) simple.set('prompt', promptEl.value);
-  simpleLink.href = `./${simple.size ? `?${simple}` : ''}`;
+  // not simple.size: older Safari and Firefox lack it
+  const qs = simple.toString();
+  simpleLink.href = `./${qs ? `?${qs}` : ''}`;
 }
 
 /** scroll heatmap and table to the last column; waits for the redraw that widens the canvas */

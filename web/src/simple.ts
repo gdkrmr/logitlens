@@ -5,7 +5,7 @@ import { showPiece } from './heatmap';
 import { webGpuProblem } from './gpu';
 import { SIMPLE_MODELS, fmtBytes } from './hf';
 import { newWllama, unloaded, recovered, cachedModels, esc, pct, setBar, showPreviewBadge } from './common';
-import { modelParam } from './views';
+import { modelParam, SIMPLE_PROMPT_MAX } from './views';
 
 // each one has a clear answer that small models get right
 const EXAMPLES = [
@@ -103,7 +103,7 @@ function selectModel(i: number) {
   syncStatus();
   updateUrl();
   // after a first run, a model already in the browser shows its own answer right away; a download waits for Run
-  if (res && cached.has(SIMPLE_MODELS[i].url)) run();
+  if (res && i !== loadedIdx && cached.has(SIMPLE_MODELS[i].url)) run();
 }
 
 btnCancel.onclick = () => loadCtl?.abort();
@@ -199,9 +199,9 @@ async function run() {
     show(r);
     updateUrl();
   } catch (e) {
-    // a cancelled download keeps the previous model: go back to it; if it is gone, so is its result
+    // a cancelled download keeps the previous model: go back to it; the scene stays only if it is that model's
     if (loadedIdx >= 0) modelIdx = loadedIdx;
-    else clearScene();
+    if (loadedIdx < 0 || resIdx !== loadedIdx) clearScene();
     caption.textContent = lastCaption = `Something went wrong: ${(e as Error).message}`;
   } finally {
     setBusy(false);
@@ -230,6 +230,7 @@ interface Lens {
 }
 
 let res: LogitLensResult | null = null;
+let resIdx = -1; // the model res came from
 let lens: Lens | null = null;
 
 function makeLens(r: LogitLensResult): Lens {
@@ -421,6 +422,8 @@ function build() {
     klValue = el('text', { x: kx(L.nL - 1) + 10, y: H - 10, class: 'sv-svg-mono' }, svg, '', { fontSize: '12px', fill: 'var(--ink)' });
   }
   svg.append(lensG);
+  builtW = W;
+  builtH = H;
   scene = { blocks, active, lens: lensG, lensLabel, outBox, outText, title, bars: new Map(), barLayer, other, klPath, klDot, klValue, yh, sx: SX, row: { x: RX, labelW, barX, barW, y0, h, fs }, kx, ky };
 }
 
@@ -430,7 +433,8 @@ function makeBar(sc: Scene, id: number, y: number): Bar {
   const fs = clamp(h * 0.42, 11, 16);
   const bh = h * 0.66;
   const chars = Math.max(3, Math.floor(labelW / (fs * 0.62)));
-  const text = piece(id);
+  // quoted, so a leading space shows: " cold" and "cold" are different tokens
+  const text = quoted(id);
   const label = el('text', { x: barX - 8, y: bh / 2 + fs * 0.36, 'text-anchor': 'end', class: 'sv-svg-mono' }, g, text.length > chars ? `${text.slice(0, chars - 1)}…` : text, { fontSize: `${fs}px`, fill: 'var(--ink)' });
   if (text.length > chars) el('title', {}, label, text);
   el('rect', { x: barX, y: 0, width: barW, height: bh, rx: 4 }, g, undefined, { fill: 'var(--sunk)' });
@@ -589,6 +593,7 @@ function klAt(L: Lens, l: number): number {
 
 function show(r: LogitLensResult) {
   res = r;
+  resIdx = loadedIdx;
   lens = makeLens(r);
   intro.hidden = true;
   lastCaption = '';
@@ -611,15 +616,23 @@ function clearScene() {
   scrub.disabled = btnPlay.disabled = true;
 }
 
+// rebuilt when the width or the height changes a lot; a caption that wraps to one more line only scales the
+// drawing a little (the viewBox keeps its aspect), instead of a jump and a flicker of the bars
+let builtW = 0;
+let builtH = 0;
 new ResizeObserver(() => {
   if (!lens) return;
+  const { width, height } = stage.getBoundingClientRect();
+  if (scene && Math.abs(width - builtW) < 1 && Math.abs(height - builtH) < 60) return;
+  const first = !scene;
   build();
+  if (!scene) return;
   lastFrame = 0;
+  // the clock ran while there was no scene to draw: start the climb now
+  if (first && playing) return play();
   // place everything at once after a resize
-  if (scene) {
-    draw(1);
-    kick();
-  }
+  draw(1);
+  kick();
 }).observe(stage);
 
 /////////////////////////////////////////////
@@ -649,6 +662,7 @@ promptEl.addEventListener('change', updateUrl);
 
 showPreviewBadge($('preview-badge'));
 
+promptEl.maxLength = SIMPLE_PROMPT_MAX;
 const promptParam = urlParams.get('prompt');
 if (promptParam !== null) promptEl.value = promptParam;
 promptEl.dispatchEvent(new Event('input'));

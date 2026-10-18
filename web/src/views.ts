@@ -16,8 +16,17 @@ export function modelParam(params: URLSearchParams): string | null {
 export const ADVANCED_PARAMS = ['chat', 'reply', 'mtp', 'draft'] as const;
 export type AdvancedParam = (typeof ADVANCED_PARAMS)[number];
 
-/** the simple view takes only a prompt and one of its models; links with other settings or models are for the advanced view */
+/** the simple view's prompt is one line of at most this many characters */
+export const SIMPLE_PROMPT_MAX = 600;
+
+/** the simple view takes only a prompt it can hold and one of its models; links with anything else are for the advanced view */
 export function advancedOnly(params: URLSearchParams): boolean {
   const model = modelParam(params);
-  return ADVANCED_PARAMS.some((k) => params.has(k)) || (!!model && !SIMPLE_MODELS.some((m) => m.url === model));
+  const prompt = params.get('prompt') ?? '';
+  return (
+    ADVANCED_PARAMS.some((k) => params.has(k)) ||
+    (!!model && !SIMPLE_MODELS.some((m) => m.url === model)) ||
+    /[\r\n]/.test(prompt) ||
+    prompt.length > SIMPLE_PROMPT_MAX
+  );
 }
